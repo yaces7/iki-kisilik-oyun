@@ -307,6 +307,7 @@ const TankGame: React.FC<{
   const [gameStarted, setGameStarted] = useState<boolean>(false);
   const [winner, setWinner] = useState<number | null>(null);
   const [smoke, setSmoke] = useState<SmokeParticle[]>([]);
+  const [bulletsToRemove, setBulletsToRemove] = useState<number[]>([]);
 
   useEffect(() => {
     const initialPlayers: Player[] = Array.from({ length: playerCount }, (_, i) => ({
@@ -469,11 +470,13 @@ const TankGame: React.FC<{
               bounces
             };
           })
-          .filter((b): b is Bullet => b !== null);
+          .filter((b): b is Bullet => b !== null)
+          .filter(bullet => !bulletsToRemove.includes(bullet.id));
       });
+      setBulletsToRemove([]);
     }, 16);
     return () => clearInterval(bulletInterval);
-  }, [walls, bullets]);
+  }, [walls, gameStarted, bulletsToRemove]);
 
   // Tank hareket ediyorsa arkasında duman efekti bırak
   useEffect(() => {
@@ -515,14 +518,14 @@ const TankGame: React.FC<{
     setMoving(initialMoving);
   }, [playerCount]);
 
-  // Tanklar sadece rotating true ise döner
+  // Tanklar sadece rotating true ise döner (daha hızlı dönsün)
   useEffect(() => {
     const interval = setInterval(() => {
       setPlayers(prevPlayers => prevPlayers.map(player => {
         if (rotating[player.id]) {
           return {
             ...player,
-            rotation: player.rotation + 2 // Sürekli artar, sıfırlanmaz
+            rotation: player.rotation + 6 // Daha hızlı dönsün
           };
         }
         return player;
@@ -573,17 +576,16 @@ const TankGame: React.FC<{
     return () => clearInterval(interval);
   }, [moving, tankSize, walls, gameStarted]);
 
-  // Mermi-tank çarpışması ve can azaltma
+  // Mermi-tank çarpışması: tek vuruşta patlama
   useEffect(() => {
     if (!gameStarted) return;
     setPlayers(prevPlayers => {
       let updatedPlayers = [...prevPlayers];
-      let updatedBullets = [...bullets];
-      updatedBullets = updatedBullets.filter(bullet => {
+      let removeBullets: number[] = [];
+      bullets.forEach(bullet => {
         for (let i = 0; i < updatedPlayers.length; i++) {
           const player = updatedPlayers[i];
           if (!player.alive || bullet.playerId === player.id) continue;
-          // Tank ve mermi çarpışma kontrolü
           const tankRect = {
             x: player.position.x,
             y: player.position.y,
@@ -593,8 +595,8 @@ const TankGame: React.FC<{
           const bulletRect = {
             x: bullet.position.x,
             y: bullet.position.y,
-            w: 8,
-            h: 8
+            w: BULLET_SIZE,
+            h: BULLET_SIZE
           };
           const hit =
             tankRect.x < bulletRect.x + bulletRect.w &&
@@ -602,27 +604,19 @@ const TankGame: React.FC<{
             tankRect.y < bulletRect.y + bulletRect.h &&
             tankRect.y + tankRect.h > bulletRect.y;
           if (hit) {
-            // Can azalt
             updatedPlayers[i] = {
               ...player,
-              health: player.health - 1
+              alive: false
             };
-            // Mermi silinsin
-            return false;
+            removeBullets.push(bullet.id);
           }
         }
-        return true;
       });
-      setBullets(updatedBullets);
-      // Canı sıfır olanları öldür
-      updatedPlayers = updatedPlayers.map(p =>
-        p.health <= 0 ? { ...p, alive: false } : p
-      );
+      setBulletsToRemove(removeBullets);
       // Kazananı kontrol et
       const alivePlayers = updatedPlayers.filter(p => p.alive);
       if (alivePlayers.length === 1 && winner === null) {
         setWinner(alivePlayers[0].id);
-        // Skor güncelle
         updatedPlayers = updatedPlayers.map(p =>
           p.id === alivePlayers[0].id ? { ...p, score: p.score + 1 } : p
         );
