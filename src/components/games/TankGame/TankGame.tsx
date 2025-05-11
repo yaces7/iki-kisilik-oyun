@@ -408,21 +408,39 @@ const TankGame: React.FC<{
           let newX = player.position.x;
           let newY = player.position.y;
           let rad = player.rotation * Math.PI / 180;
-          newX += Math.cos(rad) * speed;
-          newY += Math.sin(rad) * speed;
-          newX = Math.max(0, Math.min(window.innerWidth - tankSize, newX));
-          newY = Math.max(0, Math.min(window.innerHeight - tankSize, newY));
-          return {
-            ...player,
-            position: { x: newX, y: newY },
-            isMoving: true
+          const nextX = newX + Math.cos(rad) * speed;
+          const nextY = newY + Math.sin(rad) * speed;
+          // Tankın yeni alanı (kare)
+          const tankRect = {
+            x: nextX,
+            y: nextY,
+            w: tankSize,
+            h: tankSize
           };
+          // Duvar çarpışma kontrolü
+          const collides = walls.some(wall =>
+            tankRect.x < wall.x + wall.w &&
+            tankRect.x + tankRect.w > wall.x &&
+            tankRect.y < wall.y + wall.h &&
+            tankRect.y + tankRect.h > wall.y
+          );
+          if (!collides) {
+            newX = Math.max(0, Math.min(window.innerWidth - tankSize, nextX));
+            newY = Math.max(0, Math.min(window.innerHeight - tankSize, nextY));
+            return {
+              ...player,
+              position: { x: newX, y: newY },
+              isMoving: true
+            };
+          } else {
+            return { ...player, isMoving: false };
+          }
         }
         return { ...player, isMoving: false };
       }));
     }, 16);
     return () => clearInterval(interval);
-  }, [moving, tankSize]);
+  }, [moving, tankSize, walls]);
 
   // Butona tıklama: ateş et (mermi namlunun ucundan, doğru yöne çıkacak)
   const handleCornerButtonClick = (playerId: number) => {
@@ -502,6 +520,16 @@ const TankGame: React.FC<{
     };
   }, [deviceType]);
 
+  // Buton simgesi tank olsun, yoksa simgesiz bırak
+  const TankButtonIcon = () => (
+    <svg width="36" height="24" viewBox="0 0 36 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="4" y="8" width="20" height="8" rx="3" fill="#333" />
+      <rect x="24" y="11" width="8" height="2" rx="1" fill="#333" />
+      <circle cx="10" cy="20" r="3" fill="#333" />
+      <circle cx="20" cy="20" r="3" fill="#333" />
+    </svg>
+  );
+
   return (
     <GameArea>
       <GameGrid />
@@ -550,7 +578,7 @@ const TankGame: React.FC<{
           onMouseUp={() => handleCornerButtonUp(player.id)}
           onMouseLeave={() => handleCornerButtonUp(player.id)}
         >
-          🚀
+          <TankButtonIcon />
         </CornerButton>
       ))}
     </GameArea>
