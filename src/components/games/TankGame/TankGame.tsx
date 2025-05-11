@@ -30,14 +30,23 @@ const Grass = styled.div`
   pointer-events: none;
 `;
 
-const Bullet = styled.div<{ rotation: number }>`
+const Bullet = styled.div<{ size: number }>`
   position: absolute;
-  width: 8px;
-  height: 8px;
-  background: #fff;
+  width: ${props => props.size}px;
+  height: ${props => props.size}px;
+  background: #222;
   border-radius: 50%;
-  transform: rotate(${props => props.rotation}deg);
-  box-shadow: 0 0 5px rgba(255, 255, 255, 0.8);
+  box-shadow: 0 0 6px #000a;
+`;
+
+const Smoke = styled.div<{ size: number; opacity: number }>`
+  position: absolute;
+  width: ${props => props.size}px;
+  height: ${props => props.size}px;
+  background: #888;
+  border-radius: 50%;
+  opacity: ${props => props.opacity};
+  pointer-events: none;
 `;
 
 const HealthBar = styled.div<{ health: number; color: string }>`
@@ -137,6 +146,8 @@ interface Player {
   rotation: number;
   health: number;
   isMoving: boolean;
+  alive: boolean;
+  score: number;
 }
 
 interface Bullet {
@@ -145,6 +156,14 @@ interface Bullet {
   position: { x: number; y: number };
   rotation: number;
   bounces: number;
+}
+
+interface SmokeParticle {
+  id: number;
+  x: number;
+  y: number;
+  opacity: number;
+  size: number;
 }
 
 const cornerPositions = [
@@ -178,6 +197,66 @@ const GrassPatch = styled.div`
   border-radius: 50%;
   opacity: 0.7;
 `;
+
+const CountdownOverlay = styled.div`
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+`;
+
+const CountdownText = styled.div`
+  color: #fff;
+  font-size: 8rem;
+  font-weight: bold;
+  text-shadow: 0 0 40px #000, 0 0 10px #fff;
+  animation: pop 0.5s;
+  @keyframes pop {
+    0% { transform: scale(0.7); opacity: 0.5; }
+    60% { transform: scale(1.2); opacity: 1; }
+    100% { transform: scale(1); opacity: 1; }
+  }
+`;
+
+const WinOverlay = styled.div`
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0,0,0,0.7);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+`;
+
+const WinText = styled.div`
+  color: #fff;
+  font-size: 4rem;
+  font-weight: bold;
+  margin-bottom: 2rem;
+  text-shadow: 0 0 30px #000, 0 0 10px #fff;
+`;
+
+const ScoreTable = styled.div`
+  background: rgba(255,255,255,0.1);
+  border-radius: 12px;
+  padding: 2rem 3rem;
+  color: #fff;
+  font-size: 1.5rem;
+  box-shadow: 0 0 20px #0008;
+`;
+
+const BULLET_SIZE = 12;
+const SMOKE_SIZE = 18;
 
 // Labirent için grid tabanlı duvarlar
 function generateMaze(cols: number, rows: number) {
@@ -224,6 +303,10 @@ const TankGame: React.FC<{
   const [activePlayer, setActivePlayer] = useState<1 | 2 | 3 | 4>(1);
   const [walls, setWalls] = useState<{ x: number; y: number; w: number; h: number }[]>([]);
   const [tankSize, setTankSize] = useState<number>(60);
+  const [countdown, setCountdown] = useState<number | null>(3);
+  const [gameStarted, setGameStarted] = useState<boolean>(false);
+  const [winner, setWinner] = useState<number | null>(null);
+  const [smoke, setSmoke] = useState<SmokeParticle[]>([]);
 
   useEffect(() => {
     const initialPlayers: Player[] = Array.from({ length: playerCount }, (_, i) => ({
@@ -233,8 +316,10 @@ const TankGame: React.FC<{
         y: window.innerHeight / 2
       },
       rotation: 0,
-      health: 100,
-      isMoving: false
+      health: 3,
+      isMoving: false,
+      alive: true,
+      score: 0
     }));
     setPlayers(initialPlayers);
   }, [playerCount]);
@@ -308,11 +393,10 @@ const TankGame: React.FC<{
     setBullets(prev => [...prev, bullet]);
   }, [players]);
 
-  // Maze oluştur (ilk renderda bir kez)
+  // Maze oluştur ve tank boyutunu ayarla
   useEffect(() => {
     const maze = generateMaze(GRID_COLS, GRID_ROWS);
     setWalls(maze);
-    // Tank boyutunu duvar sayısına göre ayarla
     let size = 60;
     if (maze.length > 60) size = 36;
     else if (maze.length > 40) size = 44;
@@ -320,7 +404,28 @@ const TankGame: React.FC<{
     setTankSize(size);
   }, []);
 
-  // Mermiler düz gitsin ve sekme efektiyle yön değiştirsin, 3 sekmeden sonra kaybolsun
+  // Geri sayım başlat
+  useEffect(() => {
+    setCountdown(3);
+    setGameStarted(false);
+  }, [playerCount]);
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout;
+    if (countdown !== null) {
+      if (countdown > 0) {
+        timer = setTimeout(() => setCountdown((c) => (c !== null ? c - 1 : null)), 1000);
+      } else if (countdown === 0) {
+        timer = setTimeout(() => {
+          setCountdown(null);
+          setGameStarted(true);
+        }, 800);
+      }
+    }
+    return () => clearTimeout(timer);
+  }, [countdown]);
+
+  // Mermiler 6 kez sekince kaybolsun
   useEffect(() => {
     const bulletInterval = setInterval(() => {
       setBullets(prevBullets => {
@@ -333,21 +438,20 @@ const TankGame: React.FC<{
             let newRotation = bullet.rotation;
             let bounces = bullet.bounces;
             // Sınırdan sekme
-            if (newX < 0 || newX > window.innerWidth - 8) {
+            if (newX < 0 || newX > window.innerWidth - BULLET_SIZE) {
               newRotation = 180 - newRotation;
               bounces++;
             }
-            if (newY < 0 || newY > window.innerHeight - 8) {
+            if (newY < 0 || newY > window.innerHeight - BULLET_SIZE) {
               newRotation = 360 - newRotation;
               bounces++;
             }
             // Duvarlardan sekme
             for (const wall of walls) {
               if (
-                newX + 8 > wall.x && newX < wall.x + wall.w &&
-                newY + 8 > wall.y && newY < wall.y + wall.h
+                newX + BULLET_SIZE > wall.x && newX < wall.x + wall.w &&
+                newY + BULLET_SIZE > wall.y && newY < wall.y + wall.h
               ) {
-                // Yatay mı dikey mi?
                 if (wall.w > wall.h) {
                   newRotation = 360 - newRotation;
                 } else {
@@ -357,7 +461,7 @@ const TankGame: React.FC<{
                 break;
               }
             }
-            if (bounces >= 3) return null;
+            if (bounces >= 6) return null;
             return {
               ...bullet,
               position: { x: newX, y: newY },
@@ -369,7 +473,35 @@ const TankGame: React.FC<{
       });
     }, 16);
     return () => clearInterval(bulletInterval);
-  }, [walls]);
+  }, [walls, bullets]);
+
+  // Tank hareket ediyorsa arkasında duman efekti bırak
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setSmoke(prevSmoke => {
+        let newSmoke = [...prevSmoke];
+        players.forEach(player => {
+          if (player.isMoving && player.alive) {
+            const rad = player.rotation * Math.PI / 180;
+            // Duman tankın arkasında çıksın
+            const x = player.position.x + tankSize / 2 - Math.cos(rad) * (tankSize / 2 + 8) - SMOKE_SIZE / 2;
+            const y = player.position.y + tankSize / 2 - Math.sin(rad) * (tankSize / 2 + 8) - SMOKE_SIZE / 2;
+            newSmoke.push({
+              id: Date.now() + Math.random(),
+              x,
+              y,
+              opacity: 0.7,
+              size: SMOKE_SIZE
+            });
+          }
+        });
+        // Dumanları yavaşça sil
+        newSmoke = newSmoke.map(s => ({ ...s, opacity: s.opacity - 0.04 })).filter(s => s.opacity > 0);
+        return newSmoke;
+      });
+    }, 40);
+    return () => clearInterval(interval);
+  }, [players, tankSize]);
 
   // Başlangıçta tanklar dönüyor, hareket etmiyor
   useEffect(() => {
@@ -401,6 +533,7 @@ const TankGame: React.FC<{
 
   // Tanklar sadece moving true ise ileri gider
   useEffect(() => {
+    if (!gameStarted) return;
     const interval = setInterval(() => {
       setPlayers(prevPlayers => prevPlayers.map(player => {
         if (moving[player.id]) {
@@ -410,14 +543,12 @@ const TankGame: React.FC<{
           let rad = player.rotation * Math.PI / 180;
           const nextX = newX + Math.cos(rad) * speed;
           const nextY = newY + Math.sin(rad) * speed;
-          // Tankın yeni alanı (kare)
           const tankRect = {
             x: nextX,
             y: nextY,
             w: tankSize,
             h: tankSize
           };
-          // Duvar çarpışma kontrolü
           const collides = walls.some(wall =>
             tankRect.x < wall.x + wall.w &&
             tankRect.x + tankRect.w > wall.x &&
@@ -440,10 +571,69 @@ const TankGame: React.FC<{
       }));
     }, 16);
     return () => clearInterval(interval);
-  }, [moving, tankSize, walls]);
+  }, [moving, tankSize, walls, gameStarted]);
+
+  // Mermi-tank çarpışması ve can azaltma
+  useEffect(() => {
+    if (!gameStarted) return;
+    setPlayers(prevPlayers => {
+      let updatedPlayers = [...prevPlayers];
+      let updatedBullets = [...bullets];
+      updatedBullets = updatedBullets.filter(bullet => {
+        for (let i = 0; i < updatedPlayers.length; i++) {
+          const player = updatedPlayers[i];
+          if (!player.alive || bullet.playerId === player.id) continue;
+          // Tank ve mermi çarpışma kontrolü
+          const tankRect = {
+            x: player.position.x,
+            y: player.position.y,
+            w: tankSize,
+            h: tankSize
+          };
+          const bulletRect = {
+            x: bullet.position.x,
+            y: bullet.position.y,
+            w: 8,
+            h: 8
+          };
+          const hit =
+            tankRect.x < bulletRect.x + bulletRect.w &&
+            tankRect.x + tankRect.w > bulletRect.x &&
+            tankRect.y < bulletRect.y + bulletRect.h &&
+            tankRect.y + tankRect.h > bulletRect.y;
+          if (hit) {
+            // Can azalt
+            updatedPlayers[i] = {
+              ...player,
+              health: player.health - 1
+            };
+            // Mermi silinsin
+            return false;
+          }
+        }
+        return true;
+      });
+      setBullets(updatedBullets);
+      // Canı sıfır olanları öldür
+      updatedPlayers = updatedPlayers.map(p =>
+        p.health <= 0 ? { ...p, alive: false } : p
+      );
+      // Kazananı kontrol et
+      const alivePlayers = updatedPlayers.filter(p => p.alive);
+      if (alivePlayers.length === 1 && winner === null) {
+        setWinner(alivePlayers[0].id);
+        // Skor güncelle
+        updatedPlayers = updatedPlayers.map(p =>
+          p.id === alivePlayers[0].id ? { ...p, score: p.score + 1 } : p
+        );
+      }
+      return updatedPlayers;
+    });
+  }, [bullets, gameStarted, tankSize, winner]);
 
   // Butona tıklama: ateş et (mermi namlunun ucundan, doğru yöne çıkacak)
   const handleCornerButtonClick = (playerId: number) => {
+    if (!gameStarted) return;
     setPlayers(prevPlayers => {
       const player = prevPlayers.find(p => p.id === playerId);
       if (!player) return prevPlayers;
@@ -530,8 +720,43 @@ const TankGame: React.FC<{
     </svg>
   );
 
+  // Oyun yeniden başlatma fonksiyonu
+  const handleRestart = () => {
+    setWinner(null);
+    setCountdown(3);
+    setGameStarted(false);
+    setPlayers(prevPlayers => prevPlayers.map(p => ({
+      ...p,
+      health: 3,
+      alive: true
+    })));
+    setBullets([]);
+  };
+
   return (
     <GameArea>
+      {countdown !== null && (
+        <CountdownOverlay>
+          <CountdownText>
+            {countdown === 0 ? 'Başla!' : countdown}
+          </CountdownText>
+        </CountdownOverlay>
+      )}
+      {winner !== null && (
+        <WinOverlay>
+          <WinText>Kazanan: Oyuncu {winner}</WinText>
+          <ScoreTable>
+            {players.map(p => (
+              <div key={p.id} style={{ color: playerColors[p.id as 1 | 2 | 3 | 4] }}>
+                Oyuncu {p.id}: {p.score} puan
+              </div>
+            ))}
+          </ScoreTable>
+          <button style={{ marginTop: 32, fontSize: 24, padding: '12px 32px', borderRadius: 8, border: 'none', background: '#fff', color: '#222', fontWeight: 'bold', cursor: 'pointer' }} onClick={handleRestart}>
+            Tekrar Oyna
+          </button>
+        </WinOverlay>
+      )}
       <GameGrid />
       {/* Duvarlar */}
       {walls.map((w, i) => (
@@ -556,10 +781,15 @@ const TankGame: React.FC<{
           />
         </React.Fragment>
       ))}
+      {/* Duman Efekti */}
+      {smoke.map(s => (
+        <Smoke key={s.id} size={s.size} opacity={s.opacity} style={{ left: s.x, top: s.y }} />
+      ))}
+      {/* Mermiler */}
       {bullets.map(bullet => (
         <Bullet
           key={bullet.id}
-          rotation={bullet.rotation}
+          size={BULLET_SIZE}
           style={{
             left: bullet.position.x,
             top: bullet.position.y
