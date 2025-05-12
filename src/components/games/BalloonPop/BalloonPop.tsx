@@ -247,12 +247,24 @@ const BALLOON_COLORS = [
   '#e67e22', '#1abc9c', '#d35400', '#c0392b', '#16a085'
 ];
 
+// Balon tipleri için sabitler
+const BALLOON_TYPES = {
+  NORMAL: 'normal',
+  BONUS: 'bonus',
+  PENALTY: 'penalty',
+  MOVING: 'moving',
+  SHRINKING: 'shrinking'
+};
+
 interface Player {
   id: number;
   score: number;
   balloonCount: number;
   accuracy: number;
   clicks: number;
+  comboCount: number; // Arka arkaya balonları patlatma sayısı
+  maxCombo: number; // En yüksek arka arkaya balon patlatma sayısı
+  penalties: number; // Ceza balonlarına tıklama sayısı
 }
 
 interface BalloonObject {
@@ -264,6 +276,11 @@ interface BalloonObject {
   speed: number;
   popped: boolean;
   points: number;
+  type: string;
+  moveSpeed?: number;
+  moveDirection?: number;
+  shrinkRate?: number;
+  expiryTime?: number;
 }
 
 interface SplashEffect {
@@ -273,6 +290,78 @@ interface SplashEffect {
   color: string;
 }
 
+interface ComboEffect {
+  id: number;
+  x: number;
+  y: number;
+  comboCount: number;
+}
+
+// Yeni bileşenler
+const BonusBalloon = styled(Balloon)`
+  background: radial-gradient(circle at 30% 30%, ${props => `${props.color}dd`}, ${props => props.color});
+  box-shadow: 0 0 15px ${props => props.color}, 0 0 30px white;
+  border: 2px dashed gold;
+`;
+
+const PenaltyBalloon = styled(Balloon)`
+  background: radial-gradient(circle at 30% 30%, #000000aa, ${props => props.color});
+  &:before {
+    background: rgba(0,0,0,0.3);
+  }
+`;
+
+const ShrinkingBalloon = styled(Balloon)<{ shrinkAmount: number }>`
+  transform: scale(${props => 1 - props.shrinkAmount});
+  transition: transform 0.1s linear;
+`;
+
+const ComboDisplay = styled.div<{ count: number }>`
+  position: absolute;
+  left: 20px;
+  bottom: 20px;
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: white;
+  padding: 8px 15px;
+  border-radius: 10px;
+  background: ${props => props.count > 5 ? '#e74c3c' : props.count > 3 ? '#f39c12' : 'rgba(0, 0, 0, 0.5)'};
+  text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+  z-index: 10;
+  transition: all 0.3s ease;
+`;
+
+const ComboTextEffect = styled.div<{ x: number, y: number, count: number }>`
+  position: absolute;
+  left: ${props => props.x}px;
+  top: ${props => props.y}px;
+  font-size: ${props => 1 + Math.min(props.count * 0.1, 0.6)}rem;
+  font-weight: bold;
+  color: ${props => props.count > 10 ? 'gold' : props.count > 5 ? '#f39c12' : 'white'};
+  text-shadow: 0 0 5px rgba(0,0,0,0.7);
+  animation: float-up 1s forwards;
+  z-index: 20;
+  
+  @keyframes float-up {
+    0% { transform: translateY(0); opacity: 1; }
+    100% { transform: translateY(-50px); opacity: 0; }
+  }
+`;
+
+const LevelDisplay = styled.div`
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  transform: translateX(-50%);
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: white;
+  padding: 8px 15px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.3);
+  z-index: 10;
+`;
+
 const BalloonPop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
   // Oyuncu durumları
   const [players, setPlayers] = useState<Player[]>(
@@ -281,7 +370,10 @@ const BalloonPop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
       score: 0,
       balloonCount: 0,
       accuracy: 0,
-      clicks: 0
+      clicks: 0,
+      comboCount: 0,
+      maxCombo: 0,
+      penalties: 0
     }))
   );
   const [activePlayer, setActivePlayer] = useState(0);
@@ -291,11 +383,15 @@ const BalloonPop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
   const [round, setRound] = useState(1);
   const [balloons, setBalloons] = useState<BalloonObject[]>([]);
   const [splashEffects, setSplashEffects] = useState<SplashEffect[]>([]);
+  const [comboEffects, setComboEffects] = useState<ComboEffect[]>([]);
   const [timeLeft, setTimeLeft] = useState(30);
   const [clicks, setClicks] = useState(0);
+  const [level, setLevel] = useState(1);
+  const [combo, setCombo] = useState(0);
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const balloonIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const animationRef = useRef<number | null>(null);
   const gameAreaRef = useRef<HTMLDivElement>(null);
   
   const totalRounds = playerCount; // Her oyuncu 1 kez oynasın
@@ -304,8 +400,11 @@ const BalloonPop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
   const startRound = () => {
     setBalloons([]);
     setSplashEffects([]);
+    setComboEffects([]);
     setTimeLeft(30);
     setClicks(0);
+    setCombo(0);
+    setLevel(1);
     setPhase('playing');
     
     // Balon oluşturmaya başla
@@ -326,172 +425,347 @@ const BalloonPop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
         return prev - 1;
       });
     }, 1000);
+    
+    // Seviye sistemi - her 10 saniyede zorluk artsın
+    const levelInterval = setInterval(() => {
+      if (phase === 'playing') {
+        setLevel(prev => Math.min(prev + 1, 5));
+      }
+    }, 10000);
+    
+    return () => {
+      clearInterval(levelInterval);
+    };
   };
-  
+
   // Balon oluşturmaya başla
   const startBalloonGeneration = () => {
     if (balloonIntervalRef.current) {
       clearInterval(balloonIntervalRef.current);
     }
     
+    // Oyun alanında balonları hareket ettirmek için animasyon
+    const updateBalloons = () => {
+      setBalloons(prev => {
+        return prev.map(balloon => {
+          if (balloon.popped) return balloon;
+          
+          // Hareket eden balonlar için yeni x pozisyonu hesapla
+          if (balloon.type === BALLOON_TYPES.MOVING && balloon.moveSpeed && balloon.moveDirection) {
+            const gameWidth = gameAreaRef.current?.clientWidth || 800;
+            let newX = balloon.x + (balloon.moveSpeed * balloon.moveDirection);
+            
+            // Kenarlara çarpınca yön değiştir
+            if (newX < 0 || newX > gameWidth - balloon.size) {
+              balloon.moveDirection *= -1;
+              newX = balloon.x + (balloon.moveSpeed * balloon.moveDirection);
+            }
+            
+            return {
+              ...balloon,
+              x: newX
+            };
+          }
+          
+          // Küçülen balonlar
+          if (balloon.type === BALLOON_TYPES.SHRINKING && balloon.shrinkRate) {
+            const newSize = balloon.size - balloon.shrinkRate;
+            
+            // Tamamen küçülmüşse kaldır
+            if (newSize <= 10) {
+              return {
+                ...balloon,
+                popped: true
+              };
+            }
+            
+            return {
+              ...balloon,
+              size: newSize
+            };
+          }
+          
+          // Süreli balonlar
+          if (balloon.expiryTime && Date.now() > balloon.expiryTime) {
+            return {
+              ...balloon,
+              popped: true
+            };
+          }
+          
+          return balloon;
+        }).filter(b => !b.popped || Date.now() - b.id < 500);
+      });
+      
+      animationRef.current = requestAnimationFrame(updateBalloons);
+    };
+    
+    updateBalloons();
+    
+    // Balon üretme hızı seviyeye göre değişsin
+    const getBalloonInterval = () => {
+      switch(level) {
+        case 1: return 900;
+        case 2: return 800;
+        case 3: return 650;
+        case 4: return 500;
+        case 5: return 350;
+        default: return 800;
+      }
+    };
+    
+    // Balonları düzenli olarak ekle
     balloonIntervalRef.current = setInterval(() => {
-      addRandomBalloon();
-    }, 800); // Her 800ms'de bir yeni balon
+      if (phase === 'playing') {
+        addRandomBalloon();
+        
+        // Seviye bazlı interval ayarla
+        clearInterval(balloonIntervalRef.current!);
+        balloonIntervalRef.current = setInterval(() => {
+          if (phase === 'playing') {
+            addRandomBalloon();
+          }
+        }, getBalloonInterval());
+      }
+    }, getBalloonInterval());
   };
   
   // Rastgele balon ekle
   const addRandomBalloon = () => {
-    const gameArea = gameAreaRef.current;
-    if (!gameArea) return;
+    if (!gameAreaRef.current || phase !== 'playing') return;
     
-    const gameWidth = gameArea.clientWidth;
-    const gameHeight = gameArea.clientHeight;
+    const gameWidth = gameAreaRef.current.clientWidth;
+    const gameHeight = gameAreaRef.current.clientHeight;
     
-    // Rastgele boyut (40-80 piksel)
-    const size = Math.floor(Math.random() * 40) + 40;
+    // Balon boyutu - seviyeye göre küçülsün
+    const getSize = () => {
+      const baseSize = 60;
+      return baseSize - (level * 3);
+    };
     
-    // Rastgele konum
+    // Balon tipi seçimi - seviyeye göre farklı olasılıklar
+    const getBalloonType = () => {
+      const rand = Math.random() * 100;
+      
+      if (level >= 3 && rand < 5) return BALLOON_TYPES.PENALTY;
+      if (level >= 2 && rand < 10 + (level * 2)) return BALLOON_TYPES.MOVING;
+      if (level >= 2 && rand < 15 + (level * 3)) return BALLOON_TYPES.SHRINKING;
+      if (rand < 8 + (level * 1.5)) return BALLOON_TYPES.BONUS;
+      return BALLOON_TYPES.NORMAL;
+    };
+    
+    const balloonType = getBalloonType();
+    const size = getSize();
     const x = Math.random() * (gameWidth - size);
-    const y = -size; // Ekranın altından başlasın
+    let y = -size;
+    const speed = Math.random() * 2 + 2 - (level * 0.2);
     
-    // Rastgele hız (3-8 saniye)
-    const speed = Math.random() * 5 + 3;
+    // Balon puanını hesapla
+    const getPoints = (type: string) => {
+      switch(type) {
+        case BALLOON_TYPES.BONUS: return 3;
+        case BALLOON_TYPES.PENALTY: return -2;
+        case BALLOON_TYPES.MOVING: return 2;
+        case BALLOON_TYPES.SHRINKING: return 4;
+        default: return 1;
+      }
+    };
     
-    // Rastgele renk
-    const color = BALLOON_COLORS[Math.floor(Math.random() * BALLOON_COLORS.length)];
-    
-    // Boyuta göre puan (küçük balonlar daha değerli)
-    const points = Math.floor(10 + (80 - size) / 4);
-    
-    // Yeni balon oluştur
     const newBalloon: BalloonObject = {
-      id: Date.now() + Math.random(),
+      id: Date.now(),
       x,
       y,
       size,
-      color,
+      color: BALLOON_COLORS[Math.floor(Math.random() * BALLOON_COLORS.length)],
       speed,
       popped: false,
-      points
+      points: getPoints(balloonType),
+      type: balloonType
     };
     
+    // Özel balon tipine göre ek özellikleri ekle
+    if (balloonType === BALLOON_TYPES.MOVING) {
+      newBalloon.moveSpeed = 1 + (level * 0.5);
+      newBalloon.moveDirection = Math.random() > 0.5 ? 1 : -1;
+    }
+    
+    if (balloonType === BALLOON_TYPES.SHRINKING) {
+      newBalloon.shrinkRate = 0.3 + (level * 0.1);
+      newBalloon.expiryTime = Date.now() + (4000 - (level * 400));
+    }
+    
+    if (balloonType === BALLOON_TYPES.BONUS) {
+      newBalloon.expiryTime = Date.now() + (3000 - (level * 300));
+    }
+    
     setBalloons(prev => [...prev, newBalloon]);
-    
-    // Bir süre sonra patlamamış balonları kaldır
-    setTimeout(() => {
-      setBalloons(prev => prev.filter(b => b.id !== newBalloon.id || b.popped));
-    }, speed * 1000 + 1000);
   };
   
-  // Balon patlatma
-  const handleBalloonPop = (balloonId: number, event: React.MouseEvent) => {
-    // Tıklama sayısını artır
-    setClicks(prev => prev + 1);
-    
-    // Balonun konumunu bul
-    const balloon = balloons.find(b => b.id === balloonId);
-    if (!balloon) return;
-    
-    // Splash efektini ekle
-    const rect = (event.target as HTMLElement).getBoundingClientRect();
-    const gameAreaRect = gameAreaRef.current?.getBoundingClientRect();
-    
-    if (gameAreaRect) {
-      const splashX = event.clientX - gameAreaRect.left;
-      const splashY = event.clientY - gameAreaRect.top;
-      
-      setSplashEffects(prev => [...prev, {
-        id: Date.now() + Math.random(),
-        x: splashX,
-        y: splashY,
-        color: balloon.color
-      }]);
-      
-      // Efekti bir süre sonra kaldır
-      setTimeout(() => {
-        setSplashEffects(prev => prev.filter(e => e.id !== (Date.now() + Math.random())));
-      }, 500);
-    }
-    
-    // Balonu patlatılmış olarak işaretle
-    setBalloons(prev => prev.map(b => 
-      b.id === balloonId ? { ...b, popped: true } : b
-    ));
-    
-    // Puanı güncelle
-    setPlayers(prev => prev.map((p, i) => {
-      if (i === activePlayer) {
-        return { 
-          ...p, 
-          score: p.score + balloon.points,
-          balloonCount: p.balloonCount + 1
-        };
-      }
-      return p;
-    }));
-  };
-  
-  // Oyun alanına tıklama
-  const handleGameAreaClick = () => {
-    // Boşluğa tıklama
-    setClicks(prev => prev + 1);
-  };
-  
-  // Turu sonlandır
-  const endRound = () => {
-    // Zamanlayıcıları temizle
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-    }
-    
+  // Tüm balonları kaldır
+  const clearBalloons = () => {
     if (balloonIntervalRef.current) {
       clearInterval(balloonIntervalRef.current);
     }
     
-    // Doğruluk oranını hesapla
-    setPlayers(prev => prev.map((p, i) => {
-      if (i === activePlayer) {
-        const accuracy = clicks > 0 ? Math.round((p.balloonCount / clicks) * 100) : 0;
-        return { 
-          ...p, 
-          accuracy,
-          clicks
-        };
-      }
-      return p;
-    }));
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+    }
     
-    // Sonuç aşamasına geç
+    setBalloons([]);
+  };
+  
+  // Balon patlatma işlemi
+  const handleBalloonPop = (balloonId: number, event: React.MouseEvent) => {
+    if (phase !== 'playing') return;
+    
+    // Tıklanılan balonu bul
+    const balloon = balloons.find(b => b.id === balloonId);
+    if (!balloon || balloon.popped) return;
+    
+    // Tıklama efekti oluştur
+    const rect = (event.target as HTMLElement).getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    // Patlama efekti ekle
+    setSplashEffects(prev => [...prev, {
+      id: Date.now(),
+      x,
+      y,
+      color: balloon.color
+    }]);
+    
+    // Balonu patlat
+    setBalloons(prev => prev.map(b => 
+      b.id === balloonId ? { ...b, popped: true } : b
+    ));
+    
+    // Combo sistemi
+    let comboUpdated = balloon.type === BALLOON_TYPES.PENALTY ? 0 : combo + 1;
+    setCombo(comboUpdated);
+    
+    if (comboUpdated >= 3) {
+      setComboEffects(prev => [...prev, {
+        id: Date.now(),
+        x: balloon.x + balloon.size / 2,
+        y: balloon.y + balloon.size / 2,
+        comboCount: comboUpdated
+      }]);
+    }
+    
+    // Oyuncunun skorunu güncelle
+    setPlayers(prev => {
+      return prev.map((player, index) => {
+        if (index === activePlayer) {
+          // Combo çarpanını hesapla
+          const comboMultiplier = comboUpdated >= 10 ? 3 : 
+                                  comboUpdated >= 5 ? 2 : 
+                                  comboUpdated >= 3 ? 1.5 : 1;
+          
+          // Puan hesapla
+          const points = Math.round(balloon.points * comboMultiplier);
+          
+          // İstatistikleri güncelle
+          return {
+            ...player,
+            score: Math.max(0, player.score + points),
+            balloonCount: balloon.points > 0 ? player.balloonCount + 1 : player.balloonCount,
+            comboCount: comboUpdated,
+            maxCombo: Math.max(player.maxCombo, comboUpdated),
+            penalties: balloon.type === BALLOON_TYPES.PENALTY ? player.penalties + 1 : player.penalties
+          };
+        }
+        return player;
+      });
+    });
+    
+    // Efektleri temizle
+    setTimeout(() => {
+      setSplashEffects(prev => prev.filter(effect => Date.now() - effect.id < 300));
+      setComboEffects(prev => prev.filter(effect => Date.now() - effect.id < 1000));
+    }, 1000);
+  };
+  
+  // Oyun alanına tıklama
+  const handleGameAreaClick = (event: React.MouseEvent) => {
+    if (phase !== 'playing') return;
+    
+    setClicks(prev => prev + 1);
+    setCombo(0); // Boşluğa tıklanınca comboyu sıfırla
+    
+    setPlayers(prev => {
+      return prev.map((player, index) => {
+        if (index === activePlayer) {
+          return {
+            ...player,
+            clicks: player.clicks + 1
+          };
+        }
+        return player;
+      });
+    });
+  };
+  
+  // Turu sonlandır
+  const endRound = () => {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+    }
+    
+    clearBalloons();
+    
+    // İsabet oranını hesapla
+    setPlayers(prev => {
+      return prev.map((player, index) => {
+        if (index === activePlayer) {
+          const accuracy = player.clicks > 0 
+            ? Math.round((player.balloonCount / player.clicks) * 100) 
+            : 0;
+          
+          return {
+            ...player,
+            accuracy
+          };
+        }
+        return player;
+      });
+    });
+    
     setPhase('result');
   };
   
-  // Sonraki aşamaya geç
-  const nextStep = () => {
-    const newRound = round + 1;
-    setRound(newRound);
-    
-    if (newRound > totalRounds) {
-      // Oyun bitti
-      setPhase('end');
-    } else {
-      // Sıradaki oyuncuya geç
-      setActivePlayer((activePlayer + 1) % playerCount);
-      setPhase('ready');
-    }
-  };
-  
-  // Temizlik işlemleri
+  // Oyundan çıkınca timer ve animasyonları temizle
   useEffect(() => {
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
-      
       if (balloonIntervalRef.current) {
         clearInterval(balloonIntervalRef.current);
       }
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+      }
     };
   }, []);
+  
+  // Bir sonraki aşamaya geç
+  const nextStep = () => {
+    if (phase === 'ready') {
+      startRound();
+    } else if (phase === 'result') {
+      // Sonraki tura veya oyuna geç
+      const newRound = round + 1;
+      
+      if (newRound > totalRounds) {
+        setPhase('end');
+      } else {
+        setRound(newRound);
+        setActivePlayer((activePlayer + 1) % playerCount);
+        setPhase('ready');
+      }
+    }
+  };
   
   // Kazananı bul
   const getWinner = () => {
@@ -505,16 +779,81 @@ const BalloonPop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
     return players.filter(p => p.score === winner.score).length > 1;
   };
   
-  // En yüksek doğruluk oranı
+  // En yüksek doğruluk oranını bul
   const getHighestAccuracy = () => {
     return players.reduce((highest, player) => 
       player.accuracy > highest.accuracy ? player : highest, players[0]);
   };
   
-  // En çok balon patlatan
+  // En çok balon patlatanı bul
   const getMostBalloons = () => {
     return players.reduce((highest, player) => 
       player.balloonCount > highest.balloonCount ? player : highest, players[0]);
+  };
+
+  // En yüksek combo yapanı bul
+  const getHighestCombo = () => {
+    return players.reduce((highest, player) => 
+      player.maxCombo > highest.maxCombo ? player : highest, players[0]);
+  };
+  
+  // Balon tipine göre render et
+  const renderBalloon = (balloon: BalloonObject) => {
+    switch(balloon.type) {
+      case BALLOON_TYPES.BONUS:
+        return (
+          <BonusBalloon
+            key={balloon.id}
+            x={balloon.x}
+            y={balloon.y}
+            size={balloon.size}
+            color="#ffcd29"
+            speed={balloon.speed}
+            popped={balloon.popped}
+            onClick={(e) => handleBalloonPop(balloon.id, e)}
+          />
+        );
+      case BALLOON_TYPES.PENALTY:
+        return (
+          <PenaltyBalloon
+            key={balloon.id}
+            x={balloon.x}
+            y={balloon.y}
+            size={balloon.size}
+            color="#222222"
+            speed={balloon.speed}
+            popped={balloon.popped}
+            onClick={(e) => handleBalloonPop(balloon.id, e)}
+          />
+        );
+      case BALLOON_TYPES.SHRINKING:
+        return (
+          <ShrinkingBalloon
+            key={balloon.id}
+            x={balloon.x}
+            y={balloon.y}
+            size={balloon.size}
+            color="#8e44ad"
+            speed={balloon.speed}
+            popped={balloon.popped}
+            shrinkAmount={(balloon.shrinkRate || 0) / 20}
+            onClick={(e) => handleBalloonPop(balloon.id, e)}
+          />
+        );
+      default:
+        return (
+          <Balloon
+            key={balloon.id}
+            x={balloon.x}
+            y={balloon.y}
+            size={balloon.size}
+            color={balloon.color}
+            speed={balloon.speed}
+            popped={balloon.popped}
+            onClick={(e) => handleBalloonPop(balloon.id, e)}
+          />
+        );
+    }
   };
   
   return (
@@ -537,50 +876,52 @@ const BalloonPop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
         <>
           <InfoText>Sıra: Oyuncu {activePlayer + 1}</InfoText>
           <p style={{ color: 'white', textAlign: 'center' }}>
-            Ekranda beliren balonları patlatarak puan kazan!
-            Küçük balonlar daha değerli, boş alana tıklama ve doğruluk önemli.
+            Balonları patlatarak puan kazan! Her renk ve tür balonun puanı farklıdır.<br/>
+            Arka arkaya balonları patlatırsanız combo puanı kazanırsınız!<br/>
+            Siyah balonlardan uzak dur, onlar ceza balonu!
           </p>
-          <NextButton onClick={startRound}>Hazırım</NextButton>
+          <NextButton onClick={nextStep}>Hazırım</NextButton>
         </>
       )}
       
-      {(phase === 'playing' || phase === 'result') && (
-        <GameArea 
-          ref={gameAreaRef}
-          onClick={handleGameAreaClick}
-        >
-          {phase === 'playing' && (
-            <>
-              <Timer urgent={timeLeft <= 5}>
-                {timeLeft}
-              </Timer>
-              
-              <CountText>
-                Balonlar: {players[activePlayer].balloonCount}
-              </CountText>
-            </>
-          )}
+      {phase === 'playing' && (
+        <GameArea ref={gameAreaRef} onClick={handleGameAreaClick}>
+          <Timer urgent={timeLeft <= 10}>
+            {timeLeft}
+          </Timer>
           
-          {balloons.filter(b => !b.popped).map(balloon => (
-            <Balloon
-              key={balloon.id}
-              x={balloon.x}
-              y={balloon.y}
-              size={balloon.size}
-              color={balloon.color}
-              speed={balloon.speed}
-              popped={balloon.popped}
-              onClick={(e) => handleBalloonPop(balloon.id, e)}
-            />
-          ))}
+          <CountText>
+            Balonlar: {players[activePlayer].balloonCount}
+          </CountText>
+          
+          <LevelDisplay>
+            Seviye: {level}
+          </LevelDisplay>
+          
+          <ComboDisplay count={combo}>
+            Combo: {combo}x
+          </ComboDisplay>
+          
+          {balloons.map(balloon => renderBalloon(balloon))}
           
           {splashEffects.map(effect => (
-            <BalloonSplash
+            <BalloonSplash 
               key={effect.id}
               x={effect.x}
               y={effect.y}
               color={effect.color}
             />
+          ))}
+          
+          {comboEffects.map(effect => (
+            <ComboTextEffect
+              key={effect.id}
+              x={effect.x}
+              y={effect.y}
+              count={effect.comboCount}
+            >
+              {effect.comboCount}x Combo!
+            </ComboTextEffect>
           ))}
         </GameArea>
       )}
@@ -588,26 +929,29 @@ const BalloonPop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
       {phase === 'result' && (
         <>
           <InfoText>
-            Tur Sonu! Oyuncu {activePlayer + 1}
+            Tur sona erdi! Oyuncu {activePlayer + 1}'in sonuçları:
           </InfoText>
           
           <ResultCard>
             <StatText>
-              Toplam Puan: <StatValue highlight>{players[activePlayer].score}</StatValue>
-            </StatText>
-            <StatText>
               Patlatılan Balon: <StatValue>{players[activePlayer].balloonCount}</StatValue>
             </StatText>
             <StatText>
-              Toplam Tıklama: <StatValue>{players[activePlayer].clicks}</StatValue>
+              İsabet Oranı: <StatValue>{players[activePlayer].accuracy}%</StatValue>
             </StatText>
             <StatText>
-              Doğruluk Oranı: <StatValue>{players[activePlayer].accuracy}%</StatValue>
+              En Yüksek Combo: <StatValue highlight={players[activePlayer].maxCombo >= 5}>{players[activePlayer].maxCombo}x</StatValue>
+            </StatText>
+            <StatText>
+              Ceza Balonları: <StatValue>{players[activePlayer].penalties}</StatValue>
+            </StatText>
+            <StatText>
+              Toplam Puan: <StatValue highlight>{players[activePlayer].score}</StatValue>
             </StatText>
           </ResultCard>
           
           <NextButton onClick={nextStep}>
-            {round >= totalRounds ? 'Sonuçları Gör' : 'Sonraki Oyuncu'}
+            {round < totalRounds ? 'Sonraki Oyuncu' : 'Sonuçları Gör'}
           </NextButton>
         </>
       )}
@@ -621,67 +965,23 @@ const BalloonPop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
             }
           </InfoText>
           
-          <div style={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '1rem',
-            margin: '1rem 0'
-          }}>
-            {players.map((player, index) => (
-              <div key={player.id} style={{
-                display: 'flex',
-                flexDirection: 'column',
-                width: '100%',
-                maxWidth: '500px',
-                background: player.id === getWinner().id && !isTie() 
-                  ? 'rgba(255,255,255,0.15)' 
-                  : 'rgba(255,255,255,0.05)',
-                padding: '15px',
-                borderRadius: '10px'
-              }}>
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  borderBottom: '1px solid rgba(255,255,255,0.1)',
-                  paddingBottom: '10px',
-                  marginBottom: '10px'
-                }}>
-                  <span style={{ color: PLAYER_COLORS[index], fontWeight: 'bold' }}>
-                    Oyuncu {player.id + 1}
-                  </span>
-                  <span style={{ color: 'white', fontWeight: 'bold' }}>
-                    {player.score} puan
-                  </span>
-                </div>
-                
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: 'rgba(255,255,255,0.7)' }}>Patlatılan Balon</span>
-                  <span style={{ 
-                    color: player.balloonCount === getMostBalloons().balloonCount 
-                      ? '#f1c40f' 
-                      : 'white'
-                  }}>
-                    {player.balloonCount}
-                  </span>
-                </div>
-                
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ color: 'rgba(255,255,255,0.7)' }}>Doğruluk Oranı</span>
-                  <span style={{ 
-                    color: player.accuracy === getHighestAccuracy().accuracy 
-                      ? '#f1c40f' 
-                      : 'white'
-                  }}>
-                    {player.accuracy}%
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
+          <ResultCard>
+            <StatText>
+              En Yüksek Puan: <StatValue highlight>{getWinner().score}</StatValue>
+            </StatText>
+            <StatText>
+              En Çok Balon Patlatan: <StatValue>Oyuncu {getMostBalloons().id + 1} ({getMostBalloons().balloonCount})</StatValue>
+            </StatText>
+            <StatText>
+              En İyi İsabet Oranı: <StatValue>Oyuncu {getHighestAccuracy().id + 1} (%{getHighestAccuracy().accuracy})</StatValue>
+            </StatText>
+            <StatText>
+              En Yüksek Combo: <StatValue>Oyuncu {getHighestCombo().id + 1} ({getHighestCombo().maxCombo}x)</StatValue>
+            </StatText>
+          </ResultCard>
           
           <NextButton onClick={() => window.location.reload()}>
-            Tekrar Oyna
+            Ana Menüye Dön
           </NextButton>
         </>
       )}
