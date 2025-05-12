@@ -3,6 +3,13 @@ import styled, { keyframes } from 'styled-components';
 import GameSelection from './components/GameSelection';
 import TankGame from './components/games/TankGame/TankGame';
 import DeviceSelection from './components/DeviceSelection';
+import BomberArena from './components/games/BomberArena/BomberArena';
+import RocketRace from './components/games/RocketRace/RocketRace';
+import LaserDuel from './components/games/LaserDuel/LaserDuel';
+import ColorDash from './components/games/ColorDash/ColorDash';
+import MemoryMatch from './components/games/MemoryMatch/MemoryMatch';
+import QuickMathDuel from './components/games/QuickMathDuel/QuickMathDuel';
+import ShapeDrop from './components/games/ShapeDrop/ShapeDrop';
 
 const fadeIn = keyframes`
   from {
@@ -144,6 +151,111 @@ const App: React.FC = () => {
             playerCount={selectedPlayers} 
             deviceType={selectedDevice || 'computer'}
           />
+        </GameCanvas>
+      </GameContainer>
+    );
+  }
+
+  if (selectedGame === 5) {
+    return (
+      <GameContainer>
+        <GameCanvas>
+          <CloseButton 
+            onClick={handleBackToMenu}
+          >
+            ✖️
+          </CloseButton>
+          <BomberArena playerCount={selectedPlayers} />
+        </GameCanvas>
+      </GameContainer>
+    );
+  }
+
+  if (selectedGame === 10) {
+    return (
+      <GameContainer>
+        <GameCanvas>
+          <CloseButton 
+            onClick={handleBackToMenu}
+          >
+            ✖️
+          </CloseButton>
+          <RocketRace playerCount={selectedPlayers} />
+        </GameCanvas>
+      </GameContainer>
+    );
+  }
+
+  if (selectedGame === 20) {
+    return (
+      <GameContainer>
+        <GameCanvas>
+          <CloseButton 
+            onClick={handleBackToMenu}
+          >
+            ✖️
+          </CloseButton>
+          <LaserDuel playerCount={selectedPlayers} />
+        </GameCanvas>
+      </GameContainer>
+    );
+  }
+
+  if (selectedGame === 30) {
+    return (
+      <GameContainer>
+        <GameCanvas>
+          <CloseButton 
+            onClick={handleBackToMenu}
+          >
+            ✖️
+          </CloseButton>
+          <ColorDash playerCount={selectedPlayers} />
+        </GameCanvas>
+      </GameContainer>
+    );
+  }
+
+  if (selectedGame === 40) {
+    return (
+      <GameContainer>
+        <GameCanvas>
+          <CloseButton 
+            onClick={handleBackToMenu}
+          >
+            ✖️
+          </CloseButton>
+          <MemoryMatch playerCount={selectedPlayers} />
+        </GameCanvas>
+      </GameContainer>
+    );
+  }
+
+  if (selectedGame === 50) {
+    return (
+      <GameContainer>
+        <GameCanvas>
+          <CloseButton 
+            onClick={handleBackToMenu}
+          >
+            ✖️
+          </CloseButton>
+          <QuickMathDuel playerCount={selectedPlayers} />
+        </GameCanvas>
+      </GameContainer>
+    );
+  }
+
+  if (selectedGame === 60) {
+    return (
+      <GameContainer>
+        <GameCanvas>
+          <CloseButton 
+            onClick={handleBackToMenu}
+          >
+            ✖️
+          </CloseButton>
+          <ShapeDrop playerCount={selectedPlayers} />
         </GameCanvas>
       </GameContainer>
     );

@@ -48,23 +48,51 @@ const games = [
     maxPlayers: 4
   },
   {
-    id: 2,
-    title: 'Uzay Yarışı',
-    description: 'Uzay geminizi kontrol edin ve yıldızları toplayın!',
+    id: 5,
+    title: 'Bomber Arena',
+    description: 'Sıra tabanlı bomba bırakma arenası! Rakiplerini patlat, puan topla.',
     minPlayers: 2,
     maxPlayers: 4
   },
   {
-    id: 3,
-    title: 'Labirent Kaçış',
-    description: 'Labirentten çıkmaya çalışın ve hazineyi bulun!',
+    id: 10,
+    title: 'Rocket Race',
+    description: 'Sıra tabanlı roket fırlatma yarışı! Hedefe en yakın olan kazanır.',
     minPlayers: 2,
     maxPlayers: 4
   },
   {
-    id: 4,
-    title: 'Puzzle Savaşı',
-    description: 'En hızlı puzzle çözen siz olun!',
+    id: 20,
+    title: 'Laser Duel',
+    description: 'Sıra tabanlı lazer düellosu! Aynalardan sek, rakibini vur, puan topla.',
+    minPlayers: 2,
+    maxPlayers: 4
+  },
+  {
+    id: 30,
+    title: 'Renk Koşusu',
+    description: 'Gösterilen rengi bulun ve puan kazanın! Hız ve renk algısı yarışması.',
+    minPlayers: 2,
+    maxPlayers: 4
+  },
+  {
+    id: 40,
+    title: 'Hafıza Eşleştirme',
+    description: 'Kartları çevir ve eşini bul! Eşleşen çiftleri bulan puan kazanır.',
+    minPlayers: 2,
+    maxPlayers: 4
+  },
+  {
+    id: 50,
+    title: 'Hızlı Matematik Düellosu',
+    description: 'Matematik sorularını hızlı yanıtla ve puan topla! Yanlış yanıtlarsan puan kaybedersin.',
+    minPlayers: 2,
+    maxPlayers: 4
+  },
+  {
+    id: 60,
+    title: 'Şekil Düşürme',
+    description: 'Düşen şekilleri yakala! Doğru şekli yakalayan puan kazanır, yanlış yakalayan kaybeder.',
     minPlayers: 2,
     maxPlayers: 4
   }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import styled, { keyframes } from 'styled-components';
 import Tank from './Tank';
 
@@ -156,6 +156,8 @@ interface Bullet {
   position: { x: number; y: number };
   rotation: number;
   bounces: number;
+  velocity: { x: number; y: number };
+  createdAt: number;
 }
 
 interface SmokeParticle {
@@ -255,7 +257,7 @@ const ScoreTable = styled.div`
   box-shadow: 0 0 20px #0008;
 `;
 
-const BULLET_SIZE = 12;
+const BULLET_SIZE = 8;
 const SMOKE_SIZE = 18;
 
 // Labirent için grid tabanlı duvarlar
@@ -298,6 +300,7 @@ const TankGame: React.FC<{
 }> = ({ playerCount, deviceType }) => {
   const [players, setPlayers] = useState<Player[]>([]);
   const [bullets, setBullets] = useState<Bullet[]>([]);
+  const bulletsRef = useRef<Bullet[]>(bullets);
   const [rotating, setRotating] = useState<{ [id: number]: boolean }>({});
   const [moving, setMoving] = useState<{ [id: number]: boolean }>({});
   const [activePlayer, setActivePlayer] = useState<1 | 2 | 3 | 4>(1);
@@ -308,15 +311,35 @@ const TankGame: React.FC<{
   const [winner, setWinner] = useState<number | null>(null);
   const [smoke, setSmoke] = useState<SmokeParticle[]>([]);
   const [bulletsToRemove, setBulletsToRemove] = useState<number[]>([]);
+  const [explosions, setExplosions] = useState<{x: number, y: number, id: number}[]>([]);
 
-  useEffect(() => {
+  // Rastgele pozisyon oluşturma fonksiyonu
+  const getRandomPosition = () => {
+    const margin = 100; // Kenarlardan uzaklık
+    return {
+      x: margin + Math.random() * (window.innerWidth - 2 * margin),
+      y: margin + Math.random() * (window.innerHeight - 2 * margin)
+    };
+  };
+
+  // Oyunu başlatma fonksiyonu
+  const initializeGame = useCallback(() => {
+    // Yeni labirent oluştur
+    const maze = generateMaze(GRID_COLS, GRID_ROWS);
+    setWalls(maze);
+    
+    // Tank boyutunu ayarla
+    let size = 60;
+    if (maze.length > 60) size = 36;
+    else if (maze.length > 40) size = 44;
+    else if (maze.length > 25) size = 52;
+    setTankSize(size);
+
+    // Oyuncuları rastgele pozisyonlara yerleştir
     const initialPlayers: Player[] = Array.from({ length: playerCount }, (_, i) => ({
       id: i + 1,
-      position: {
-        x: window.innerWidth / (playerCount + 1) * (i + 1),
-        y: window.innerHeight / 2
-      },
-      rotation: 0,
+      position: getRandomPosition(),
+      rotation: Math.random() * 360, // Rastgele başlangıç rotasyonu
       health: 3,
       isMoving: false,
       alive: true,
@@ -325,11 +348,16 @@ const TankGame: React.FC<{
     setPlayers(initialPlayers);
   }, [playerCount]);
 
+  // Oyun başladığında ve yeniden başlatıldığında initializeGame'i çağır
+  useEffect(() => {
+    initializeGame();
+  }, [initializeGame]);
+
   const movePlayer = useCallback((playerId: number, direction: 'up' | 'down' | 'left' | 'right') => {
-    setPlayers(prevPlayers => 
-      prevPlayers.map(player => {
+    setPlayers(prevPlayers => {
+      return prevPlayers.map(player => {
         if (player.id === playerId) {
-          const speed = 5;
+          const speed = 2; // Tank hızını yavaşlattık
           let newX = player.position.x;
           let newY = player.position.y;
           let newRotation = player.rotation;
@@ -353,57 +381,65 @@ const TankGame: React.FC<{
               break;
           }
 
-          // Sınırları kontrol et
-          newX = Math.max(0, Math.min(window.innerWidth - 60, newX));
-          newY = Math.max(0, Math.min(window.innerHeight - 60, newY));
+          // Duvarlarla çarpışma kontrolü
+          const playerRect = {
+            x: newX - tankSize / 2,
+            y: newY - tankSize / 2,
+            w: tankSize,
+            h: tankSize
+          };
+
+          const hasCollision = walls.some(wall => {
+            return !(playerRect.x + playerRect.w < wall.x ||
+              playerRect.x > wall.x + wall.w ||
+              playerRect.y + playerRect.h < wall.y ||
+              playerRect.y > wall.y + wall.h);
+          });
+
+          if (hasCollision) {
+            return player;
+          }
+
+          // Ekran sınırları kontrolü
+          newX = Math.max(tankSize / 2, Math.min(window.innerWidth - tankSize / 2, newX));
+          newY = Math.max(tankSize / 2, Math.min(window.innerHeight - tankSize / 2, newY));
 
           return {
             ...player,
             position: { x: newX, y: newY },
-            rotation: newRotation,
-            isMoving: true
+            rotation: newRotation
           };
         }
-        return {
-          ...player,
-          isMoving: false
-        };
-      })
-    );
-  }, []);
+        return player;
+      });
+    });
+  }, [tankSize, walls]);
 
+  // Mermi atma fonksiyonu
   const fireBullet = useCallback((playerId: number) => {
     const player = players.find(p => p.id === playerId);
     if (!player) return;
 
+    const speed = 10;
     const rad = player.rotation * Math.PI / 180;
-    // Tankın merkezinden namlu ucuna offset
-    const offsetX = Math.sin(rad) * (TANK_SIZE / 2 + CANNON_LENGTH / 2);
-    const offsetY = -Math.cos(rad) * (TANK_SIZE / 2 + CANNON_LENGTH / 2);
+    const velocity = {
+      x: Math.cos(rad) * speed,
+      y: Math.sin(rad) * speed
+    };
     const bullet: Bullet = {
       id: Date.now() + Math.random(),
       playerId,
       position: {
-        x: player.position.x + TANK_SIZE / 2 + offsetX - 4, // 4: mermi yarıçapı
-        y: player.position.y + TANK_SIZE / 2 + offsetY - 4
+        x: player.position.x + tankSize / 2 + Math.cos(rad) * (tankSize / 2 + CANNON_LENGTH) - BULLET_SIZE / 2,
+        y: player.position.y + tankSize / 2 + Math.sin(rad) * (tankSize / 2 + CANNON_LENGTH) - BULLET_SIZE / 2
       },
       rotation: player.rotation,
-      bounces: 0
+      bounces: 0,
+      velocity,
+      createdAt: Date.now()
     };
-
     setBullets(prev => [...prev, bullet]);
-  }, [players]);
-
-  // Maze oluştur ve tank boyutunu ayarla
-  useEffect(() => {
-    const maze = generateMaze(GRID_COLS, GRID_ROWS);
-    setWalls(maze);
-    let size = 60;
-    if (maze.length > 60) size = 36;
-    else if (maze.length > 40) size = 44;
-    else if (maze.length > 25) size = 52;
-    setTankSize(size);
-  }, []);
+  }, [players, tankSize]);
 
   // Geri sayım başlat
   useEffect(() => {
@@ -426,46 +462,50 @@ const TankGame: React.FC<{
     return () => clearTimeout(timer);
   }, [countdown]);
 
-  // Mermiler 6 kez sekince kaybolsun
+  useEffect(() => { bulletsRef.current = bullets; }, [bullets]);
+
+  // Mermiler 6 kez sekince kaybolsun ve çarpışanlar silinsin, ayrıca 5 saniye sonra silinsin
   useEffect(() => {
     const bulletInterval = setInterval(() => {
       setBullets(prevBullets => {
-        return prevBullets
+        const now = Date.now();
+        const currentBullets = bulletsRef.current;
+        return currentBullets
           .map(bullet => {
-            let speed = 10;
-            let rad = bullet.rotation * Math.PI / 180;
-            let newX = bullet.position.x + Math.cos(rad) * speed;
-            let newY = bullet.position.y + Math.sin(rad) * speed;
+            let newX = bullet.position.x + bullet.velocity.x;
+            let newY = bullet.position.y + bullet.velocity.y;
+            let newVelocity = { ...bullet.velocity };
             let newRotation = bullet.rotation;
             let bounces = bullet.bounces;
-            // Sınırdan sekme
+            // Kenarlara çarpınca sekme
             if (newX < 0 || newX > window.innerWidth - BULLET_SIZE) {
-              newRotation = 180 - newRotation;
+              newVelocity.x = -newVelocity.x;
               bounces++;
             }
             if (newY < 0 || newY > window.innerHeight - BULLET_SIZE) {
-              newRotation = 360 - newRotation;
+              newVelocity.y = -newVelocity.y;
               bounces++;
             }
-            // Duvarlardan sekme
             for (const wall of walls) {
               if (
                 newX + BULLET_SIZE > wall.x && newX < wall.x + wall.w &&
                 newY + BULLET_SIZE > wall.y && newY < wall.y + wall.h
               ) {
+                // Yatay veya dikey duvara göre velocity'yi ters çevir
                 if (wall.w > wall.h) {
-                  newRotation = 360 - newRotation;
+                  newVelocity.y = -newVelocity.y;
                 } else {
-                  newRotation = 180 - newRotation;
+                  newVelocity.x = -newVelocity.x;
                 }
                 bounces++;
                 break;
               }
             }
-            if (bounces >= 6) return null;
+            if (bounces >= 6 || now - bullet.createdAt > 5000) return null;
             return {
               ...bullet,
               position: { x: newX, y: newY },
+              velocity: newVelocity,
               rotation: newRotation,
               bounces
             };
@@ -576,7 +616,15 @@ const TankGame: React.FC<{
     return () => clearInterval(interval);
   }, [moving, tankSize, walls, gameStarted]);
 
-  // Mermi-tank çarpışması: tek vuruşta patlama
+  // Patlama efekti eklerken 0.5 saniye sonra otomatik sil
+  const addExplosion = (x: number, y: number, id: number) => {
+    setExplosions(explosions => [...explosions, {x, y, id}]);
+    setTimeout(() => {
+      setExplosions(explosions => explosions.filter(e => e.id !== id));
+    }, 500);
+  };
+
+  // Mermi-tank çarpışması: friendly fire aktif, patlama efekti
   useEffect(() => {
     if (!gameStarted) return;
     setPlayers(prevPlayers => {
@@ -585,7 +633,7 @@ const TankGame: React.FC<{
       bullets.forEach(bullet => {
         for (let i = 0; i < updatedPlayers.length; i++) {
           const player = updatedPlayers[i];
-          if (!player.alive || bullet.playerId === player.id) continue;
+          if (!player.alive) continue;
           const tankRect = {
             x: player.position.x,
             y: player.position.y,
@@ -608,6 +656,7 @@ const TankGame: React.FC<{
               ...player,
               alive: false
             };
+            addExplosion(player.position.x, player.position.y, player.id);
             removeBullets.push(bullet.id);
           }
         }
@@ -628,27 +677,7 @@ const TankGame: React.FC<{
   // Butona tıklama: ateş et (mermi namlunun ucundan, doğru yöne çıkacak)
   const handleCornerButtonClick = (playerId: number) => {
     if (!gameStarted) return;
-    setPlayers(prevPlayers => {
-      const player = prevPlayers.find(p => p.id === playerId);
-      if (!player) return prevPlayers;
-      const rad = player.rotation * Math.PI / 180;
-      const centerX = player.position.x + tankSize / 2;
-      const centerY = player.position.y + tankSize / 2;
-      const offsetX = Math.cos(rad) * (tankSize / 2 + CANNON_LENGTH);
-      const offsetY = Math.sin(rad) * (tankSize / 2 + CANNON_LENGTH);
-      const bullet: Bullet = {
-        id: Date.now() + Math.random(),
-        playerId,
-        position: {
-          x: centerX + offsetX - 4,
-          y: centerY + offsetY - 4
-        },
-        rotation: player.rotation,
-        bounces: 0
-      };
-      setBullets(prev => [...prev, bullet]);
-      return prevPlayers;
-    });
+    fireBullet(playerId);
   };
 
   // Butona basılı tutma: hareket başlar, dönme durur
@@ -719,13 +748,32 @@ const TankGame: React.FC<{
     setWinner(null);
     setCountdown(3);
     setGameStarted(false);
-    setPlayers(prevPlayers => prevPlayers.map(p => ({
-      ...p,
-      health: 3,
-      alive: true
-    })));
+    initializeGame();
     setBullets([]);
   };
+
+  // Patlama efekti (basit bir animasyon)
+  const Explosion = ({x, y}: {x: number, y: number}) => (
+    <div style={{
+      position: 'absolute',
+      left: x,
+      top: y,
+      width: tankSize,
+      height: tankSize,
+      pointerEvents: 'none',
+      zIndex: 1000,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+    }}>
+      <svg width={tankSize} height={tankSize}>
+        <circle cx={tankSize/2} cy={tankSize/2} r={tankSize/2-2} fill="orange" fillOpacity="0.7">
+          <animate attributeName="r" from={tankSize/2-2} to={tankSize} dur="0.5s" fill="freeze" />
+          <animate attributeName="opacity" from="0.7" to="0" dur="0.5s" fill="freeze" />
+        </circle>
+      </svg>
+    </div>
+  );
 
   return (
     <GameArea>
@@ -805,6 +853,8 @@ const TankGame: React.FC<{
           <TankButtonIcon />
         </CornerButton>
       ))}
+      {/* Patlama efektleri */}
+      {explosions.map(e => <Explosion key={e.id} x={e.x} y={e.y} />)}
     </GameArea>
   );
 };
