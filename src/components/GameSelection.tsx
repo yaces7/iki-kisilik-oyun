@@ -95,6 +95,41 @@ const games = [
     description: 'Düşen şekilleri yakala! Doğru şekli yakalayan puan kazanır, yanlış yakalayan kaybeder.',
     minPlayers: 2,
     maxPlayers: 4
+  },
+  {
+    id: 70,
+    title: 'Refleks Savaşı',
+    description: '"Şimdi Bas!" yazısı belirdiğinde en hızlı tepki veren puan kazanır. Erken basarsan puan kaybedersin!',
+    minPlayers: 2,
+    maxPlayers: 4
+  },
+  {
+    id: 80,
+    title: 'Labirent Koşusu',
+    description: 'Her oyuncu sırayla labirentte en kısa sürede çıkışa ulaşmaya çalışır. Hızlı olan daha çok puan alır.',
+    minPlayers: 2,
+    maxPlayers: 4
+  },
+  {
+    id: 90,
+    title: 'Emoji Tahmini',
+    description: 'Ekranda bir emoji gösterilir, doğru anlamını 4 seçenek arasından seçmeye çalış. Doğru bilen puan alır.',
+    minPlayers: 2,
+    maxPlayers: 4
+  },
+  {
+    id: 100,
+    title: 'Kelime Zinciri',
+    description: 'Sırayla herkes bir önceki kelimenin son harfiyle başlayan bir kelime söyler. Hatalı yapan elenir.',
+    minPlayers: 2,
+    maxPlayers: 4
+  },
+  {
+    id: 110,
+    title: 'Balon Patlatma',
+    description: 'Ekranda balonlar çıkar, sıradaki oyuncu en hızlı şekilde balonu patlatmaya çalışır. Hızlı olan puan alır.',
+    minPlayers: 2,
+    maxPlayers: 4
   }
 ];
 

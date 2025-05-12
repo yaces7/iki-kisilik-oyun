@@ -10,6 +10,11 @@ import ColorDash from './components/games/ColorDash/ColorDash';
 import MemoryMatch from './components/games/MemoryMatch/MemoryMatch';
 import QuickMathDuel from './components/games/QuickMathDuel/QuickMathDuel';
 import ShapeDrop from './components/games/ShapeDrop/ShapeDrop';
+import ReactionBattle from './components/games/ReactionBattle/ReactionBattle';
+import MazeRunner from './components/games/MazeRunner/MazeRunner';
+import EmojiGuess from './components/games/EmojiGuess/EmojiGuess';
+import WordChain from './components/games/WordChain/WordChain';
+import BalloonPop from './components/games/BalloonPop/BalloonPop';
 
 const fadeIn = keyframes`
   from {
@@ -256,6 +261,81 @@ const App: React.FC = () => {
             ✖️
           </CloseButton>
           <ShapeDrop playerCount={selectedPlayers} />
+        </GameCanvas>
+      </GameContainer>
+    );
+  }
+
+  if (selectedGame === 70) {
+    return (
+      <GameContainer>
+        <GameCanvas>
+          <CloseButton 
+            onClick={handleBackToMenu}
+          >
+            ✖️
+          </CloseButton>
+          <ReactionBattle playerCount={selectedPlayers} />
+        </GameCanvas>
+      </GameContainer>
+    );
+  }
+
+  if (selectedGame === 80) {
+    return (
+      <GameContainer>
+        <GameCanvas>
+          <CloseButton 
+            onClick={handleBackToMenu}
+          >
+            ✖️
+          </CloseButton>
+          <MazeRunner playerCount={selectedPlayers} />
+        </GameCanvas>
+      </GameContainer>
+    );
+  }
+
+  if (selectedGame === 90) {
+    return (
+      <GameContainer>
+        <GameCanvas>
+          <CloseButton 
+            onClick={handleBackToMenu}
+          >
+            ✖️
+          </CloseButton>
+          <EmojiGuess playerCount={selectedPlayers} />
+        </GameCanvas>
+      </GameContainer>
+    );
+  }
+
+  if (selectedGame === 100) {
+    return (
+      <GameContainer>
+        <GameCanvas>
+          <CloseButton 
+            onClick={handleBackToMenu}
+          >
+            ✖️
+          </CloseButton>
+          <WordChain playerCount={selectedPlayers} />
+        </GameCanvas>
+      </GameContainer>
+    );
+  }
+
+  if (selectedGame === 110) {
+    return (
+      <GameContainer>
+        <GameCanvas>
+          <CloseButton 
+            onClick={handleBackToMenu}
+          >
+            ✖️
+          </CloseButton>
+          <BalloonPop playerCount={selectedPlayers} />
         </GameCanvas>
       </GameContainer>
     );

@@ -159,7 +159,22 @@ const Timer = styled.div<{ urgent?: boolean }>`
 // Düşen şekil stili
 const createFallingAnimation = (startX: number, endX: number, duration: number) => keyframes`
   0% { transform: translate(${startX}px, -50px); }
-  100% { transform: translate(${endX}px, calc(100% + 50px)); }
+  100% { transform: translate(${endX}px, calc(100vh - 250px)); }
+`;
+
+// El yakalayıcı SVG'sini ekle
+const HandCatcher = styled.div<{ x: number, y: number, color: string }>`
+  position: absolute;
+  left: ${props => props.x - 30}px;
+  top: ${props => props.y - 35}px;
+  width: 60px;
+  height: 70px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  pointer-events: none;
+  z-index: 5;
+  transform: rotate(0deg);
 `;
 
 const ShapeContainer = styled.div<{ 
@@ -168,10 +183,11 @@ const ShapeContainer = styled.div<{
   duration: number,
   paused: boolean,
   color: string,
-  caught: boolean
+  caught: boolean,
+  top: number
 }>`
   position: absolute;
-  top: 0;
+  top: ${props => props.top}px;
   left: 0;
   width: 50px;
   height: 50px;
@@ -180,7 +196,9 @@ const ShapeContainer = styled.div<{
   align-items: center;
   animation: ${props => createFallingAnimation(props.startX, props.endX, props.duration)} ${props => props.duration}s linear forwards;
   animation-play-state: ${props => props.paused ? 'paused' : 'running'};
-  pointer-events: none;
+  pointer-events: auto;
+  z-index: 3;
+  cursor: pointer;
   
   svg {
     width: 100%;
@@ -190,26 +208,13 @@ const ShapeContainer = styled.div<{
   }
 `;
 
-const CatcherContainer = styled.div<{ x: number, y: number, color: string }>`
-  position: absolute;
-  left: ${props => props.x - 40}px;
-  top: ${props => props.y - 40}px;
-  width: 80px;
-  height: 80px;
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  pointer-events: none;
-  z-index: 5;
+// Yakalayıcı bileşenlerini değiştir
+const CatcherContainer = styled.div`
+  display: none;
 `;
 
-const CatcherInner = styled.div<{ color: string }>`
-  width: 60px;
-  height: 60px;
-  border: 4px solid ${props => props.color};
-  border-radius: 50%;
-  box-shadow: 0 0 15px ${props => props.color};
-  background: ${props => props.color}22;
+const CatcherInner = styled.div`
+  display: none;
 `;
 
 const CatchEffect = styled.div<{ x: number, y: number, color: string }>`
@@ -363,7 +368,7 @@ const ShapeDrop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
       
       // Rastgele şekil ekle
       addRandomShape();
-    }, 500); // Her 500ms'de bir yeni şekil
+    }, 700); // Her 700ms'de bir yeni şekil (biraz daha yavaş)
   };
   
   // Rastgele şekil oluşturma
@@ -376,10 +381,8 @@ const ShapeDrop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
     // Rastgele bir şekil seç
     const shape = SHAPES[Math.floor(Math.random() * SHAPES.length)];
     
-    // Başlangıç ve bitiş X pozisyonları
+    // Başlangıç X pozisyonu
     const startX = Math.random() * (gameWidth - 50);
-    const xShift = (Math.random() - 0.5) * 200; // -100 ile 100 arası
-    const endX = Math.max(0, Math.min(gameWidth - 50, startX + xShift));
     
     // Rastgele bir hız belirle (2-6 saniye)
     const speed = Math.random() * 2 + 2;
@@ -389,11 +392,11 @@ const ShapeDrop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
       id: Date.now() + Math.random(),
       shape,
       startX,
-      endX,
+      endX: startX, // Düz düşsün, endX = startX
       speed,
       y: 0,
       caught: false,
-      color: shape.name === targets.find(t => t.shape.name === shape.name)?.shape.name 
+      color: targets.some(t => t.shape.name === shape.name) 
         ? '#FFD700' // Hedef şekiller altın renkli
         : '#FFFFFF', // Diğerleri beyaz
       timestamp: Date.now()
@@ -402,25 +405,7 @@ const ShapeDrop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
     setActiveShapes(prev => [...prev, newShape]);
   };
   
-  // Zamanı takip et
-  useEffect(() => {
-    if (phase !== 'playing') return;
-    
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          // Süre doldu
-          endRound();
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-    
-    return () => clearInterval(timer);
-  }, [phase]);
-  
-  // Şekillerin pozisyonunu güncelle ve çarpışma kontrolü yap
+  // Şekillerin pozisyonunu güncelle
   useEffect(() => {
     if (phase !== 'playing' || gamePaused) return;
     
@@ -428,86 +413,35 @@ const ShapeDrop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
     if (!gameArea) return;
     
     const gameHeight = gameArea.clientHeight;
-    const catcherRadius = 30; // Yakalayıcı yarıçapı
     
-    const animationFrame = requestAnimationFrame(() => {
-      // Her şeklin Y pozisyonunu hesapla
+    const animationInterval = setInterval(() => {
       const currentTime = Date.now();
-      const updatedShapes = [...activeShapes];
       
-      // Yakalama kontrolü
-      let anyCaught = false;
-      
-      updatedShapes.forEach(shape => {
-        if (shape.caught) return;
-        
-        // Geçen süreyi hesapla
-        const elapsedTime = (currentTime - shape.timestamp) / 1000;
-        const progress = Math.min(1, elapsedTime / shape.speed);
-        
-        // Mevcut pozisyonu hesapla
-        const xPos = shape.startX + (shape.endX - shape.startX) * progress;
-        const yPos = progress * (gameHeight + 100) - 50;
-        
-        // Şeklin merkezi
-        const shapeCenterX = xPos + 25;
-        const shapeCenterY = yPos + 25;
-        
-        // Yakalayıcı ile mesafe hesapla
-        const distance = Math.sqrt(
-          Math.pow(shapeCenterX - mousePosition.x, 2) + 
-          Math.pow(shapeCenterY - mousePosition.y, 2)
-        );
-        
-        // Yakalama kontrolü
-        if (distance < catcherRadius + 25 && !shape.caught) {
-          shape.caught = true;
-          anyCaught = true;
+      setActiveShapes(prev => {
+        const updated = prev.map(shape => {
+          if (shape.caught) return shape;
           
-          // Yakalama efekti ekle
-          setCatchEffects(prev => [...prev, {
-            id: Date.now() + Math.random(),
-            x: shapeCenterX,
-            y: shapeCenterY,
-            color: shape.color
-          }]);
+          // Geçen süreyi hesapla
+          const elapsedTime = (currentTime - shape.timestamp) / 1000;
+          const progress = Math.min(1, elapsedTime / shape.speed);
           
-          // Hedef şekil mi kontrol et
-          const targetShape = targets.find(t => t.shape.name === shape.shape.name);
-          if (targetShape) {
-            // Oyuncunun topladığı şekilleri güncelle
-            setPlayers(prev => prev.map((p, i) => {
-              if (i === activePlayer) {
-                const updatedShapesCollected = { ...p.shapesCollected };
-                updatedShapesCollected[shape.shape.name] = (updatedShapesCollected[shape.shape.name] || 0) + 1;
-                
-                return { 
-                  ...p, 
-                  shapesCollected: updatedShapesCollected,
-                  score: p.score + 1 // Her yakalanan hedef şekil için 1 puan
-                };
-              }
-              return p;
-            }));
+          // Mevcut Y pozisyonunu hesapla
+          const yPos = progress * (gameHeight + 100) - 50;
+          
+          // Ekranın dışına çıktıysa kaldır
+          if (yPos > gameHeight && !shape.caught) {
+            return { ...shape, caught: true };
           }
-        }
+          
+          return { ...shape, y: yPos };
+        });
         
-        // Ekrandan çıkan şekilleri temizle
-        if (yPos > gameHeight + 100) {
-          shape.caught = true;
-        }
+        // 5 saniyeden eski yakalanmış şekilleri temizle
+        return updated.filter(shape => {
+          const age = (currentTime - shape.timestamp) / 1000;
+          return !shape.caught || age < 5;
+        });
       });
-      
-      // Yakalanan şekiller varsa efekt sesi çal
-      if (anyCaught) {
-        // Ses çalma kodu buraya eklenebilir
-      }
-      
-      // Şekilleri güncelle
-      setActiveShapes(updatedShapes.filter(s => (currentTime - s.timestamp) / 1000 < s.speed + 5));
-      
-      // Eski efektleri temizle
-      setCatchEffects(prev => prev.filter(effect => Date.now() - effect.id < 300));
       
       // Hedef tamamlandı mı kontrol et
       const currentPlayer = players[activePlayer];
@@ -530,12 +464,34 @@ const ShapeDrop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
         }));
         
         // Turu erken bitir
-        endRound();
+        clearInterval(animationInterval);
+        // endRound fonksiyonunu doğrudan çağırmak yerine phase'i değiştiriyoruz
+        setPhase('result');
+        setGamePaused(true);
       }
-    });
+      
+    }, 16); // Yaklaşık 60 FPS
     
-    return () => cancelAnimationFrame(animationFrame);
-  }, [activeShapes, mousePosition, phase, gamePaused, players, activePlayer, targets]);
+    return () => clearInterval(animationInterval);
+  }, [phase, gamePaused, activePlayer, players, targets]);
+  
+  // Zamanı takip et
+  useEffect(() => {
+    if (phase !== 'playing') return;
+    
+    const timer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          // Süre doldu
+          endRound();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    
+    return () => clearInterval(timer);
+  }, [phase]);
   
   // Tur sonu kontrolü
   const endRound = () => {
@@ -589,6 +545,52 @@ const ShapeDrop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
     const percent = Math.min(100, (collected / target.count) * 100);
     
     return { collected, target: target.count, percent };
+  };
+  
+  // Şekile tıklama olayını işle
+  const handleShapeClick = (shapeId: number) => {
+    if (phase !== 'playing' || gamePaused) return;
+    
+    // Tıklanan şekli bul
+    const clickedShape = activeShapes.find(shape => shape.id === shapeId);
+    if (!clickedShape || clickedShape.caught) return;
+    
+    // Şekli yakalandı olarak işaretle
+    setActiveShapes(prev => prev.map(shape => 
+      shape.id === shapeId ? { ...shape, caught: true } : shape
+    ));
+    
+    // Yakalama efekti ekle
+    setCatchEffects(prev => [...prev, {
+      id: Date.now() + Math.random(),
+      x: clickedShape.startX + 25, // Şeklin ortası
+      y: clickedShape.y + 25, // Güncel Y pozisyonu kullan
+      color: clickedShape.color
+    }]);
+    
+    // 500ms sonra efekti kaldır
+    setTimeout(() => {
+      setCatchEffects(prev => prev.filter(effect => effect.id !== Date.now() + Math.random()));
+    }, 500);
+    
+    // Hedef şekil mi kontrol et
+    const targetShape = targets.find(t => t.shape.name === clickedShape.shape.name);
+    if (targetShape) {
+      // Oyuncunun topladığı şekilleri güncelle
+      setPlayers(prev => prev.map((p, i) => {
+        if (i === activePlayer) {
+          const updatedShapesCollected = { ...p.shapesCollected };
+          updatedShapesCollected[clickedShape.shape.name] = (updatedShapesCollected[clickedShape.shape.name] || 0) + 1;
+          
+          return { 
+            ...p, 
+            shapesCollected: updatedShapesCollected,
+            score: p.score + 1 // Her yakalanan hedef şekil için 1 puan
+          };
+        }
+        return p;
+      }));
+    }
   };
   
   return (
@@ -646,7 +648,7 @@ const ShapeDrop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
             )}
             
             {activeShapes.map(shape => (
-              <ShapeContainer 
+              <ShapeContainer
                 key={shape.id}
                 startX={shape.startX}
                 endX={shape.endX}
@@ -654,6 +656,8 @@ const ShapeDrop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
                 paused={gamePaused}
                 color={shape.color}
                 caught={shape.caught}
+                onClick={() => handleShapeClick(shape.id)}
+                top={shape.y || 0}
               >
                 {shape.shape.svg}
               </ShapeContainer>
@@ -669,13 +673,16 @@ const ShapeDrop: React.FC<{ playerCount: number }> = ({ playerCount }) => {
             ))}
             
             {phase === 'playing' && (
-              <CatcherContainer 
+              <HandCatcher
                 x={mousePosition.x} 
                 y={mousePosition.y}
                 color={PLAYER_COLORS[activePlayer]}
               >
-                <CatcherInner color={PLAYER_COLORS[activePlayer]} />
-              </CatcherContainer>
+                <svg viewBox="0 0 24 24" fill="none" stroke={PLAYER_COLORS[activePlayer]} strokeWidth="2">
+                  <path d="M6,12.5 v-2 c0-1.1,0.9-2,2-2 s2,0.9,2,2 v-4 c0-1.1,0.9-2,2-2 s2,0.9,2,2 v0 c0-1.1,0.9-2,2-2 s2,0.9,2,2 v4 c0-1.1,0.9-2,2-2 s2,0.9,2,2 v6 c0,4.4-3.6,8-8,8 h-2 c-2.8,0-5.5-1.5-7-4 l-3-5" 
+                   fill="rgba(255,255,255,0.2)" strokeLinejoin="round" strokeLinecap="round" />
+                </svg>
+              </HandCatcher>
             )}
           </GameArea>
         </>
