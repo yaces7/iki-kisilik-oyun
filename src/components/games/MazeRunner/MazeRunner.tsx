@@ -266,11 +266,38 @@ const StatLabel = styled.div`
   color: rgba(255, 255, 255, 0.7);
 `;
 
+// Zorluk seviyeleri
+const DIFFICULTY_LEVELS = {
+  EASY: {
+    name: 'Kolay',
+    mazeSize: 15,
+    timeBonus: 30,
+    hazardCount: 0,
+    collectibleCount: 3,
+    fogOfWar: false
+  },
+  MEDIUM: {
+    name: 'Orta',
+    mazeSize: 21,
+    timeBonus: 20,
+    hazardCount: 3,
+    collectibleCount: 5,
+    fogOfWar: false
+  },
+  HARD: {
+    name: 'Zor',
+    mazeSize: 25,
+    timeBonus: 10,
+    hazardCount: 5,
+    collectibleCount: 8,
+    fogOfWar: true
+  }
+};
+
 // Oyuncu renkleri
 const PLAYER_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f'];
 
-// Labirent ölçüleri
-const MAZE_SIZE = 15; // 15x15 labirent
+// Labirent ölçüleri - artık dinamik olacak
 const DIRECTIONS = [
   { dx: 0, dy: -1 }, // Yukarı
   { dx: 1, dy: 0 },  // Sağ
@@ -278,16 +305,50 @@ const DIRECTIONS = [
   { dx: -1, dy: 0 }, // Sol
 ];
 
+// Hazard ve collectible tipleri
+const HAZARD_TYPES = [
+  { type: 'trap', symbol: '⚡', effect: 'slow', penalty: 5 },
+  { type: 'mud', symbol: '💩', effect: 'slow', penalty: 3 },
+  { type: 'teleport', symbol: '🌀', effect: 'teleport', penalty: 0 }
+];
+
+const COLLECTIBLE_TYPES = [
+  { type: 'coin', symbol: '💰', points: 10 },
+  { type: 'gem', symbol: '💎', points: 20 },
+  { type: 'star', symbol: '⭐', points: 30 },
+  { type: 'key', symbol: '🔑', points: 15, effect: 'unlock' }
+];
+
 interface Player {
   id: number;
   score: number;
   completionTime: number | null;
   stepsTaken: number;
+  collectiblesFound: number;
+  hazardsHit: number;
 }
 
 interface Position {
   x: number;
   y: number;
+}
+
+interface Collectible {
+  position: Position;
+  type: string;
+  symbol: string;
+  points: number;
+  collected: boolean;
+  effect?: string;
+}
+
+interface Hazard {
+  position: Position;
+  type: string;
+  symbol: string;
+  effect: string;
+  penalty: number;
+  triggered: boolean;
 }
 
 const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
@@ -297,7 +358,9 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
       id: i, 
       score: 0,
       completionTime: null,
-      stepsTaken: 0
+      stepsTaken: 0,
+      collectiblesFound: 0,
+      hazardsHit: 0
     }))
   );
   const [activePlayer, setActivePlayer] = useState(0);
@@ -306,25 +369,41 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
   const [maze, setMaze] = useState<boolean[][]>([]);
   const [playerPosition, setPlayerPosition] = useState<Position>({ x: 1, y: 1 });
   const [startPosition, setStartPosition] = useState<Position>({ x: 1, y: 1 });
-  const [finishPosition, setFinishPosition] = useState<Position>({ x: MAZE_SIZE - 2, y: MAZE_SIZE - 2 });
+  const [finishPosition, setFinishPosition] = useState<Position>({ x: 0, y: 0 });
   const [visitedCells, setVisitedCells] = useState<boolean[][]>([]);
+  const [visibleCells, setVisibleCells] = useState<boolean[][]>([]); // Görüş alanı için (FOW)
+  const [collectibles, setCollectibles] = useState<Collectible[]>([]);
+  const [hazards, setHazards] = useState<Hazard[]>([]);
+  const [difficulty, setDifficulty] = useState(DIFFICULTY_LEVELS.MEDIUM);
+  const [mazeSize, setMazeSize] = useState(difficulty.mazeSize);
   
   // Oyun durumları
   const [phase, setPhase] = useState<'ready' | 'playing' | 'finished' | 'end'>('ready');
   const [round, setRound] = useState(1);
   const [timer, setTimer] = useState(0);
   const [celebrating, setCelebrating] = useState(false);
+  const [isSlowed, setIsSlowed] = useState(false); // Tuzak etkisi
+  const [slowedTimer, setSlowedTimer] = useState<NodeJS.Timeout | null>(null);
   
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const mazeContainerRef = useRef<HTMLDivElement>(null);
   const cellSize = useRef(20); // Default cell size
   const totalRounds = playerCount; // Her oyuncu 1 tur oynasın
   
+  // Zorluk seviyesini değiştir
+  const changeDifficulty = (newDifficulty: typeof DIFFICULTY_LEVELS.EASY | 
+                                         typeof DIFFICULTY_LEVELS.MEDIUM | 
+                                         typeof DIFFICULTY_LEVELS.HARD) => {
+    setDifficulty(newDifficulty);
+    setMazeSize(newDifficulty.mazeSize);
+  };
+  
   // Labirent oluşturma fonksiyonu
   const generateMaze = useCallback(() => {
     // Başlangıçta tüm hücreler duvar
-    const newMaze: boolean[][] = Array(MAZE_SIZE).fill(0)
-      .map(() => Array(MAZE_SIZE).fill(true));
+    const size = mazeSize;
+    const newMaze: boolean[][] = Array(size).fill(0)
+      .map(() => Array(size).fill(true));
     
     // Recursive Backtracking algoritması ile labirent oluştur
     const stack: Position[] = [];
@@ -334,7 +413,7 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
     stack.push(start);
     
     const isValid = (x: number, y: number) => 
-      x > 0 && x < MAZE_SIZE - 1 && y > 0 && y < MAZE_SIZE - 1;
+      x > 0 && x < size - 1 && y > 0 && y < size - 1;
     
     const getUnvisitedNeighbors = (x: number, y: number) => {
       const neighbors: Position[] = [];
@@ -374,7 +453,7 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
     }
     
     // Bitiş noktasını ayarla (labirentin uzak köşesi)
-    const finish: Position = { x: MAZE_SIZE - 2, y: MAZE_SIZE - 2 };
+    const finish: Position = { x: size - 2, y: size - 2 };
     newMaze[finish.y][finish.x] = false;
     
     // Bitiş noktasına giden yolu garantile
@@ -395,18 +474,153 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
     setFinishPosition(finish);
     setPlayerPosition(start);
     
-    // Ziyaret edilen hücreleri sıfırla
-    setVisitedCells(Array(MAZE_SIZE).fill(0)
-      .map(() => Array(MAZE_SIZE).fill(false)));
-      
+    // Ziyaret edilen ve görülebilen hücreleri sıfırla
+    const emptyGrid = Array(size).fill(0).map(() => Array(size).fill(false));
+    setVisitedCells([...emptyGrid]);
+    
+    // Görüş alanını ayarla - zorluk seviyesine göre
+    if (difficulty.fogOfWar) {
+      setVisibleCells([...emptyGrid]);
+      updateVisibility(start);
+    } else {
+      // Tüm hücreler görünür olsun
+      setVisibleCells(Array(size).fill(0).map(() => Array(size).fill(true)));
+    }
+    
+    // Hazard (tuzak) ve collectible (toplanabilir eşya) ekle
+    generateHazards(newMaze, start, finish);
+    generateCollectibles(newMaze, start, finish);
+    
     return newMaze;
-  }, []);
+  }, [mazeSize, difficulty.fogOfWar]);
+  
+  // Hazard (tuzak) oluşturma fonksiyonu
+  const generateHazards = (maze: boolean[][], start: Position, finish: Position) => {
+    const newHazards: Hazard[] = [];
+    const size = mazeSize;
+    const count = difficulty.hazardCount;
+    
+    // Başlangıç ve bitiş pozisyonundan uzağa tuzakları yerleştir
+    const isValidPosition = (pos: Position) => {
+      // Yol mu kontrolü
+      if (maze[pos.y][pos.x]) return false;
+      
+      // Başlangıç ve bitişe çok yakın mı kontrolü
+      const startDist = Math.abs(pos.x - start.x) + Math.abs(pos.y - start.y);
+      const finishDist = Math.abs(pos.x - finish.x) + Math.abs(pos.y - finish.y);
+      if (startDist < 5 || finishDist < 5) return false;
+      
+      // Mevcut tuzakların üzerine gelmesin
+      return !newHazards.some(h => h.position.x === pos.x && h.position.y === pos.y);
+    };
+    
+    for (let i = 0; i < count; i++) {
+      // Rastgele tuzak tipi seç
+      const hazardType = HAZARD_TYPES[Math.floor(Math.random() * HAZARD_TYPES.length)];
+      
+      // Rastgele geçerli pozisyon bul
+      let pos: Position;
+      let attempts = 0;
+      do {
+        pos = {
+          x: Math.floor(Math.random() * (size - 2)) + 1,
+          y: Math.floor(Math.random() * (size - 2)) + 1
+        };
+        attempts++;
+      } while (!isValidPosition(pos) && attempts < 100);
+      
+      if (attempts < 100) {
+        newHazards.push({
+          position: pos,
+          type: hazardType.type,
+          symbol: hazardType.symbol,
+          effect: hazardType.effect,
+          penalty: hazardType.penalty,
+          triggered: false
+        });
+      }
+    }
+    
+    setHazards(newHazards);
+  };
+  
+  // Collectible (toplanabilir eşya) oluşturma fonksiyonu
+  const generateCollectibles = (maze: boolean[][], start: Position, finish: Position) => {
+    const newCollectibles: Collectible[] = [];
+    const size = mazeSize;
+    const count = difficulty.collectibleCount;
+    
+    // Başlangıç ve bitiş pozisyonundan uzağa eşyaları yerleştir
+    const isValidPosition = (pos: Position) => {
+      // Yol mu kontrolü
+      if (maze[pos.y][pos.x]) return false;
+      
+      // Başlangıç ve bitişe çok yakın mı kontrolü
+      const startDist = Math.abs(pos.x - start.x) + Math.abs(pos.y - start.y);
+      if (startDist < 3) return false;
+      
+      // Mevcut collectible'ların üzerine gelmesin
+      return !newCollectibles.some(c => c.position.x === pos.x && c.position.y === pos.y);
+    };
+    
+    for (let i = 0; i < count; i++) {
+      // Rastgele collectible tipi seç
+      const collectibleType = COLLECTIBLE_TYPES[Math.floor(Math.random() * COLLECTIBLE_TYPES.length)];
+      
+      // Rastgele geçerli pozisyon bul
+      let pos: Position;
+      let attempts = 0;
+      do {
+        pos = {
+          x: Math.floor(Math.random() * (size - 2)) + 1,
+          y: Math.floor(Math.random() * (size - 2)) + 1
+        };
+        attempts++;
+      } while (!isValidPosition(pos) && attempts < 100);
+      
+      if (attempts < 100) {
+        newCollectibles.push({
+          position: pos,
+          type: collectibleType.type,
+          symbol: collectibleType.symbol,
+          points: collectibleType.points,
+          collected: false,
+          effect: collectibleType.effect
+        });
+      }
+    }
+    
+    setCollectibles(newCollectibles);
+  };
+  
+  // Görüş alanını güncelle (Zor mod için)
+  const updateVisibility = (playerPos: Position) => {
+    const viewRadius = 3; // Görüş mesafesi
+    
+    setVisibleCells(prev => {
+      const newVisible = [...prev];
+      
+      // Oyuncunun etrafındaki hücreleri görünür yap
+      for (let y = Math.max(0, playerPos.y - viewRadius); y <= Math.min(mazeSize - 1, playerPos.y + viewRadius); y++) {
+        for (let x = Math.max(0, playerPos.x - viewRadius); x <= Math.min(mazeSize - 1, playerPos.x + viewRadius); x++) {
+          // Manhattan mesafesi kullan (kare görüş alanı yerine daha dairesel)
+          const distance = Math.abs(x - playerPos.x) + Math.abs(y - playerPos.y);
+          if (distance <= viewRadius) {
+            newVisible[y][x] = true;
+          }
+        }
+      }
+      
+      return newVisible;
+    });
+  };
   
   // Oyunu başlat
   const startGame = () => {
     generateMaze();
     setTimer(0);
     setPhase('playing');
+    setIsSlowed(false);
     
     // Zamanlayıcıyı başlat
     if (timerRef.current) {
@@ -417,10 +631,15 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
       setTimer(prev => prev + 0.1);
     }, 100);
     
-    // Mevcut oyuncunun adım sayısını sıfırla
+    // Mevcut oyuncunun istatistiklerini sıfırla
     setPlayers(prev => prev.map((p, i) => {
       if (i === activePlayer) {
-        return { ...p, stepsTaken: 0 };
+        return { 
+          ...p, 
+          stepsTaken: 0,
+          collectiblesFound: 0,
+          hazardsHit: 0 
+        };
       }
       return p;
     }));
@@ -434,7 +653,7 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
           mazeContainerRef.current.clientWidth,
           mazeContainerRef.current.clientHeight
         );
-        cellSize.current = Math.floor(containerSize / MAZE_SIZE);
+        cellSize.current = Math.floor(containerSize / DIFFICULTY_LEVELS.EASY.mazeSize);
       }
     };
     
@@ -452,6 +671,9 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
       }
+      if (slowedTimer) {
+        clearTimeout(slowedTimer);
+      }
     };
   }, []);
   
@@ -459,15 +681,21 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
   const movePlayer = (dx: number, dy: number) => {
     if (phase !== 'playing') return;
     
+    // Eğer yavaşlatma etkisi varsa ve rastgele bir sayı 0.3'ten düşükse, hareketi engelle
+    if (isSlowed && Math.random() < 0.3) {
+      return; // Hareket başarısız (kayma etkisi)
+    }
+    
     const newX = playerPosition.x + dx;
     const newY = playerPosition.y + dy;
     
     // Hareket geçerli mi kontrol et
     if (
-      newX >= 0 && newX < MAZE_SIZE &&
-      newY >= 0 && newY < MAZE_SIZE &&
+      newX >= 0 && newX < mazeSize &&
+      newY >= 0 && newY < mazeSize &&
       !maze[newY][newX] // Duvar değilse
     ) {
+      // Oyuncuyu hareket ettir
       setPlayerPosition({ x: newX, y: newY });
       
       // Ziyaret edilen hücreyi işaretle
@@ -477,6 +705,11 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
         return newVisited;
       });
       
+      // FOW (görüş alanı) varsa güncelle
+      if (difficulty.fogOfWar) {
+        updateVisibility({ x: newX, y: newY });
+      }
+      
       // Adım sayısını artır
       setPlayers(prev => prev.map((p, i) => {
         if (i === activePlayer) {
@@ -484,6 +717,97 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
         }
         return p;
       }));
+      
+      // Collectible kontrol et
+      const collectibleIndex = collectibles.findIndex(
+        c => c.position.x === newX && c.position.y === newY && !c.collected
+      );
+      
+      if (collectibleIndex !== -1) {
+        // Collectible toplandı
+        const collectedItem = collectibles[collectibleIndex];
+        
+        // Collectible durumunu güncelle
+        setCollectibles(prev => prev.map((c, i) => 
+          i === collectibleIndex ? { ...c, collected: true } : c
+        ));
+        
+        // Oyuncu puanını güncelle
+        setPlayers(prev => prev.map((p, i) => {
+          if (i === activePlayer) {
+            return { 
+              ...p, 
+              score: p.score + collectedItem.points,
+              collectiblesFound: p.collectiblesFound + 1 
+            };
+          }
+          return p;
+        }));
+      }
+      
+      // Hazard (tuzak) kontrol et
+      const hazardIndex = hazards.findIndex(
+        h => h.position.x === newX && h.position.y === newY && !h.triggered
+      );
+      
+      if (hazardIndex !== -1) {
+        // Tuzağa basıldı
+        const triggeredHazard = hazards[hazardIndex];
+        
+        // Tuzak durumunu güncelle
+        setHazards(prev => prev.map((h, i) => 
+          i === hazardIndex ? { ...h, triggered: true } : h
+        ));
+        
+        // Oyuncu istatistiklerini güncelle
+        setPlayers(prev => prev.map((p, i) => {
+          if (i === activePlayer) {
+            return { 
+              ...p, 
+              hazardsHit: p.hazardsHit + 1
+            };
+          }
+          return p;
+        }));
+        
+        // Tuzak etkisini uygula
+        if (triggeredHazard.effect === 'slow') {
+          // Yavaşlatma etkisi
+          setIsSlowed(true);
+          
+          // Mevcut yavaşlatma zamanlayıcısını temizle
+          if (slowedTimer) {
+            clearTimeout(slowedTimer);
+          }
+          
+          // 5 saniye sonra normal hıza dön
+          const timer = setTimeout(() => {
+            setIsSlowed(false);
+          }, 5000);
+          
+          setSlowedTimer(timer);
+        } 
+        else if (triggeredHazard.effect === 'teleport') {
+          // Rastgele bir yere ışınlanma
+          let randomX, randomY;
+          let attempts = 0;
+          
+          do {
+            randomX = Math.floor(Math.random() * (mazeSize - 2)) + 1;
+            randomY = Math.floor(Math.random() * (mazeSize - 2)) + 1;
+            attempts++;
+          } while (maze[randomY][randomX] && attempts < 100); // Duvar olmayana kadar dene
+          
+          if (attempts < 100) {
+            setPlayerPosition({ x: randomX, y: randomY });
+            
+            // FOW (görüş alanı) varsa güncelle
+            if (difficulty.fogOfWar) {
+              updateVisibility({ x: randomX, y: randomY });
+            }
+          }
+        }
+      }
       
       // Bitiş noktasına ulaşıldı mı kontrol et
       if (newX === finishPosition.x && newY === finishPosition.y) {
@@ -498,18 +822,27 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
       clearInterval(timerRef.current);
     }
     
+    // Yavaşlatma zamanlayıcısını temizle
+    if (slowedTimer) {
+      clearTimeout(slowedTimer);
+      setSlowedTimer(null);
+    }
+    
     // Kutlama animasyonu
     setCelebrating(true);
     
     // Oyuncunun tamamlama zamanını ve puanını kaydet
     const completionTime = parseFloat(timer.toFixed(1));
+    const collectiblesBonus = calculateCollectiblesBonus();
+    
     setPlayers(prev => prev.map((p, i) => {
       if (i === activePlayer) {
         // Tamamlama süresi ne kadar kısaysa o kadar çok puan
         const baseScore = 100;
-        const timeBonus = Math.max(0, Math.floor(30 - completionTime) * 2);
+        const timeBonus = Math.max(0, Math.floor(difficulty.timeBonus - completionTime) * 2);
         const stepPenalty = Math.floor(p.stepsTaken / 10);
-        const score = baseScore + timeBonus - stepPenalty;
+        const hazardPenalty = p.hazardsHit * 5;
+        const score = baseScore + timeBonus + collectiblesBonus - stepPenalty - hazardPenalty;
         
         return { 
           ...p, 
@@ -527,6 +860,35 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
     setTimeout(() => {
       setCelebrating(false);
     }, 2000);
+  };
+  
+  // Toplanan eşyalardan elde edilen bonus puanı hesapla
+  const calculateCollectiblesBonus = () => {
+    return collectibles
+      .filter(c => c.collected)
+      .reduce((total, c) => total + c.points, 0);
+  };
+  
+  // Formatlanmış süre
+  const formatTime = (time: number) => {
+    return time.toFixed(1);
+  };
+  
+  // Kazananı bul
+  const getWinner = () => {
+    return players.reduce((highest, player) => 
+      player.score > highest.score ? player : highest, players[0]);
+  };
+  
+  // Beraberlik kontrolü
+  const isTie = () => {
+    const winner = getWinner();
+    return players.filter(p => p.score === winner.score).length > 1;
+  };
+  
+  // Sıralı oyuncular
+  const getRankedPlayers = () => {
+    return [...players].sort((a, b) => b.score - a.score);
   };
   
   // Klavye kontrolleri
@@ -571,28 +933,6 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
     }
   };
   
-  // Formatlanmış süre
-  const formatTime = (time: number) => {
-    return time.toFixed(1);
-  };
-  
-  // Kazananı bul
-  const getWinner = () => {
-    return players.reduce((highest, player) => 
-      player.score > highest.score ? player : highest, players[0]);
-  };
-  
-  // Beraberlik kontrolü
-  const isTie = () => {
-    const winner = getWinner();
-    return players.filter(p => p.score === winner.score).length > 1;
-  };
-  
-  // Sıralı oyuncular
-  const getRankedPlayers = () => {
-    return [...players].sort((a, b) => b.score - a.score);
-  };
-  
   return (
     <GameContainer>
       <Header>Labirent Koşusu</Header>
@@ -612,10 +952,39 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
       {phase === 'ready' && (
         <>
           <InfoText>Sıra: Oyuncu {activePlayer + 1}</InfoText>
-          <p style={{ color: 'white', textAlign: 'center' }}>
+          <p style={{ color: 'white', textAlign: 'center', maxWidth: '600px' }}>
             Labirentte başlangıç noktasından (yeşil) bitiş noktasına (kırmızı) ulaşmaya çalış.
-            Hızlı olursan daha çok puan kazanırsın!
+            Hızlı olursan daha çok puan kazanırsın! Değerli eşyaları toplamayı ve tuzaklardan kaçınmayı unutma!
           </p>
+          
+          <div style={{display: 'flex', gap: '10px', marginBottom: '1rem', justifyContent: 'center'}}>
+            {Object.values(DIFFICULTY_LEVELS).map(level => (
+              <button
+                key={level.name}
+                onClick={() => changeDifficulty(level)}
+                style={{
+                  padding: '8px 16px',
+                  background: difficulty.name === level.name ? 'rgba(52, 152, 219, 0.7)' : 'rgba(255, 255, 255, 0.1)',
+                  border: 'none',
+                  borderRadius: '8px',
+                  color: 'white',
+                  fontWeight: difficulty.name === level.name ? 'bold' : 'normal',
+                  cursor: 'pointer'
+                }}
+              >
+                {level.name}
+              </button>
+            ))}
+          </div>
+          
+          <p style={{ color: 'white', textAlign: 'center', fontSize: '0.9rem', margin: '5px 0' }}>
+            {difficulty.name === 'Kolay' ? 
+              '15x15 labirent, eşya bonusu, tuzak yok' : 
+              difficulty.name === 'Orta' ? 
+              '21x21 labirent, eşya ve tuzaklar' : 
+              '25x25 labirent, eşya ve tuzaklar, görüş alanı sınırlı'}
+          </p>
+          
           <NextButton onClick={startGame}>Başla</NextButton>
         </>
       )}
@@ -623,30 +992,130 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
       {(phase === 'playing' || phase === 'finished') && (
         <>
           {phase === 'playing' && (
-            <TimerDisplay>{formatTime(timer)} sn</TimerDisplay>
+            <>
+              <TimerDisplay>{formatTime(timer)} sn</TimerDisplay>
+              
+              {isSlowed && (
+                <div style={{
+                  color: '#e74c3c',
+                  background: 'rgba(231, 76, 60, 0.2)',
+                  padding: '5px 10px',
+                  borderRadius: '5px',
+                  marginBottom: '5px',
+                  fontSize: '0.9rem'
+                }}>
+                  ⚠️ Yavaşlatıldın! Bazı hareketlerin başarısız olabilir.
+                </div>
+              )}
+            </>
           )}
           
           <MazeContainer ref={mazeContainerRef}>
             {/* Labirent hücreleri */}
             {maze.map((row, y) => 
-              row.map((isWall, x) => (
-                <MazeCell
-                  key={`${x}-${y}`}
-                  isWall={isWall}
-                  isStart={x === startPosition.x && y === startPosition.y}
-                  isFinish={x === finishPosition.x && y === finishPosition.y}
-                  isPath={visitedCells[y]?.[x] || false}
-                  isPlayer={false}
-                  color="transparent"
-                  style={{
-                    width: `${cellSize.current}px`,
-                    height: `${cellSize.current}px`,
-                    left: `${x * cellSize.current}px`,
-                    top: `${y * cellSize.current}px`
-                  }}
-                />
-              ))
+              row.map((isWall, x) => {
+                // Görüş alanı kontrolü (Zor mod)
+                const isVisible = !difficulty.fogOfWar || visibleCells[y]?.[x];
+                
+                if (!isVisible) {
+                  return (
+                    <MazeCell
+                      key={`${x}-${y}`}
+                      isWall={true}
+                      isStart={false}
+                      isFinish={false}
+                      isPath={false}
+                      isPlayer={false}
+                      color="black"
+                      style={{
+                        width: `${cellSize.current}px`,
+                        height: `${cellSize.current}px`,
+                        left: `${x * cellSize.current}px`,
+                        top: `${y * cellSize.current}px`,
+                        background: '#000',
+                        opacity: 0.8
+                      }}
+                    />
+                  );
+                }
+                
+                return (
+                  <MazeCell
+                    key={`${x}-${y}`}
+                    isWall={isWall}
+                    isStart={x === startPosition.x && y === startPosition.y}
+                    isFinish={x === finishPosition.x && y === finishPosition.y}
+                    isPath={visitedCells[y]?.[x] || false}
+                    isPlayer={false}
+                    color="transparent"
+                    style={{
+                      width: `${cellSize.current}px`,
+                      height: `${cellSize.current}px`,
+                      left: `${x * cellSize.current}px`,
+                      top: `${y * cellSize.current}px`
+                    }}
+                  />
+                );
+              })
             )}
+            
+            {/* Collectibles (eşyalar) */}
+            {collectibles.map((item, index) => {
+              // Görüş alanı kontrolü (Zor mod)
+              const isVisible = !difficulty.fogOfWar || 
+                visibleCells[item.position.y]?.[item.position.x];
+                
+              if (!isVisible || item.collected) return null;
+              
+              return (
+                <div
+                  key={`collectible-${index}`}
+                  style={{
+                    position: 'absolute',
+                    left: `${item.position.x * cellSize.current + cellSize.current * 0.2}px`,
+                    top: `${item.position.y * cellSize.current + cellSize.current * 0.2}px`,
+                    width: `${cellSize.current * 0.6}px`,
+                    height: `${cellSize.current * 0.6}px`,
+                    fontSize: `${cellSize.current * 0.5}px`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 3
+                  }}
+                >
+                  {item.symbol}
+                </div>
+              );
+            })}
+            
+            {/* Hazards (tuzaklar) */}
+            {hazards.map((item, index) => {
+              // Görüş alanı kontrolü (Zor mod)
+              const isVisible = !difficulty.fogOfWar || 
+                visibleCells[item.position.y]?.[item.position.x];
+                
+              if (!isVisible || item.triggered) return null;
+              
+              return (
+                <div
+                  key={`hazard-${index}`}
+                  style={{
+                    position: 'absolute',
+                    left: `${item.position.x * cellSize.current + cellSize.current * 0.2}px`,
+                    top: `${item.position.y * cellSize.current + cellSize.current * 0.2}px`,
+                    width: `${cellSize.current * 0.6}px`,
+                    height: `${cellSize.current * 0.6}px`,
+                    fontSize: `${cellSize.current * 0.5}px`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    zIndex: 2
+                  }}
+                >
+                  {item.symbol}
+                </div>
+              );
+            })}
             
             {/* Oyuncu */}
             <MazeCell
@@ -661,7 +1130,8 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
                 height: `${cellSize.current * 0.8}px`,
                 left: `${playerPosition.x * cellSize.current + cellSize.current * 0.1}px`,
                 top: `${playerPosition.y * cellSize.current + cellSize.current * 0.1}px`,
-                transition: 'left 0.2s, top 0.2s'
+                transition: 'left 0.2s, top 0.2s',
+                zIndex: 10
               }}
             />
             
@@ -712,8 +1182,12 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
                   <StatLabel>Adım</StatLabel>
                 </StatBox>
                 <StatBox>
-                  <StatValue>{players[activePlayer].score}</StatValue>
-                  <StatLabel>Toplam Puan</StatLabel>
+                  <StatValue>{players[activePlayer].collectiblesFound}</StatValue>
+                  <StatLabel>Eşya</StatLabel>
+                </StatBox>
+                <StatBox>
+                  <StatValue>{players[activePlayer].hazardsHit}</StatValue>
+                  <StatLabel>Tuzak</StatLabel>
                 </StatBox>
               </StatsContainer>
               
@@ -745,12 +1219,17 @@ const MazeRunner: React.FC<{ playerCount: number }> = ({ playerCount }) => {
                 </div>
                 <div>{player.score} puan</div>
                 <div>{player.completionTime ? `${formatTime(player.completionTime)} sn` : '-'}</div>
+                <div>
+                  <span style={{fontSize: '0.8rem'}}>
+                    {player.collectiblesFound} eşya | {player.hazardsHit} tuzak
+                  </span>
+                </div>
               </ResultRow>
             ))}
           </ResultsTable>
           
           <NextButton onClick={() => window.location.reload()}>
-            Tekrar Oyna
+            Ana Menüye Dön
           </NextButton>
         </>
       )}
