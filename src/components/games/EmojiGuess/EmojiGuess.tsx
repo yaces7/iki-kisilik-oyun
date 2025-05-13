@@ -154,6 +154,65 @@ const FeedbackText = styled.div<{ correct: boolean }>`
   text-shadow: 0 2px 10px rgba(0,0,0,0.2);
 `;
 
+const Timer = styled.div<{ urgent: boolean }>`
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: ${props => props.urgent ? '#e74c3c' : 'white'};
+  text-align: center;
+  margin: 0.5rem 0;
+  padding: 8px 15px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.2);
+  transition: color 0.3s ease;
+`;
+
+const DifficultySelector = styled.div`
+  display: flex;
+  gap: 10px;
+  margin: 1rem 0;
+`;
+
+const DifficultyButton = styled.button<{ selected: boolean }>`
+  padding: 8px 16px;
+  background: ${props => props.selected ? 'rgba(46, 204, 113, 0.3)' : 'rgba(255, 255, 255, 0.1)'};
+  border: 2px solid ${props => props.selected ? '#2ecc71' : 'rgba(255, 255, 255, 0.2)'};
+  border-radius: 8px;
+  color: white;
+  font-weight: ${props => props.selected ? 'bold' : 'normal'};
+  cursor: pointer;
+  transition: all 0.2s;
+  
+  &:hover {
+    background: rgba(255, 255, 255, 0.2);
+  }
+`;
+
+const StreakIndicator = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0.5rem 0;
+  padding: 5px 15px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+`;
+
+const StreakIcon = styled.div<{ active: boolean }>`
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: ${props => props.active ? '#f39c12' : 'rgba(255, 255, 255, 0.2)'};
+  transition: background 0.3s ease;
+`;
+
+const EmojiCombo = styled.div<{ size: number }>`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: ${props => props.size > 1 ? '3rem' : '8rem'};
+  margin: 1rem auto;
+`;
+
 const Spinner = styled.div`
   width: 40px;
   height: 40px;
@@ -201,17 +260,29 @@ const EMOJI_DATA = [
 // Oyuncu renkleri
 const PLAYER_COLORS = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f'];
 
+// Zorluk seviyeleri
+const DIFFICULTY_LEVELS = {
+  EASY: 'Kolay',
+  MEDIUM: 'Orta',
+  HARD: 'Zor'
+};
+
 interface Player {
   id: number;
   score: number;
   correctAnswers: number;
   totalAnswers: number;
+  streak: number; // Arka arkaya doğru cevap
+  maxStreak: number; // En yüksek streak
 }
 
 interface Question {
   emoji: string;
   correctAnswer: string;
   options: string[];
+  difficulty?: string;
+  emojis?: string[]; // Birden fazla emoji gösterme
+  timeLimit?: number; // Saniye cinsinden zaman sınırı
 }
 
 const EmojiGuess: React.FC<{ playerCount: number }> = ({ playerCount }) => {
@@ -221,7 +292,9 @@ const EmojiGuess: React.FC<{ playerCount: number }> = ({ playerCount }) => {
       id: i,
       score: 0,
       correctAnswers: 0,
-      totalAnswers: 0
+      totalAnswers: 0,
+      streak: 0,
+      maxStreak: 0
     }))
   );
   const [activePlayer, setActivePlayer] = useState(0);
@@ -233,8 +306,31 @@ const EmojiGuess: React.FC<{ playerCount: number }> = ({ playerCount }) => {
   const [selectedOption, setSelectedOption] = useState<string | null>(null);
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
   const [usedEmojis, setUsedEmojis] = useState<string[]>([]);
+  const [difficulty, setDifficulty] = useState(DIFFICULTY_LEVELS.MEDIUM);
+  const [timeLeft, setTimeLeft] = useState<number>(15);
+  const [timer, setTimer] = useState<NodeJS.Timeout | null>(null);
   
   const totalRounds = playerCount * 5; // Her oyuncu 5 soru cevaplasın
+  
+  // Zaman sınırını ayarla
+  const getTimeLimit = (difficulty: string): number => {
+    switch(difficulty) {
+      case DIFFICULTY_LEVELS.EASY: return 20;
+      case DIFFICULTY_LEVELS.MEDIUM: return 15;
+      case DIFFICULTY_LEVELS.HARD: return 10;
+      default: return 15;
+    }
+  };
+  
+  // Zorluk seviyesine göre puan
+  const getPointValue = (difficulty: string): number => {
+    switch(difficulty) {
+      case DIFFICULTY_LEVELS.EASY: return 5;
+      case DIFFICULTY_LEVELS.MEDIUM: return 10;
+      case DIFFICULTY_LEVELS.HARD: return 15;
+      default: return 10;
+    }
+  };
   
   // Yeni bir soru oluştur
   const generateQuestion = (): void => {
@@ -254,13 +350,45 @@ const EmojiGuess: React.FC<{ playerCount: number }> = ({ playerCount }) => {
     // Seçilen emojiyi kullanılmış olarak işaretle
     setUsedEmojis(prev => [...prev, emojiData.emoji]);
     
-    // Seçenekleri karıştır
-    const shuffledOptions = [...emojiData.options].sort(() => Math.random() - 0.5);
+    // Zorluk seviyesine göre oyun mekanikleri değişsin
+    let options = [...emojiData.options];
+    let emojis: string[] = [emojiData.emoji];
+    
+    if (difficulty === DIFFICULTY_LEVELS.HARD) {
+      // Zor modda diğer emojilerden de ekle
+      const otherEmojis = EMOJI_DATA.filter(e => e.emoji !== emojiData.emoji)
+                          .sort(() => Math.random() - 0.5)
+                          .slice(0, 2)
+                          .map(e => e.emoji);
+      
+      emojis = [emojiData.emoji, ...otherEmojis].sort(() => Math.random() - 0.5);
+      
+      // Daha fazla yanıltıcı şık ekleyelim
+      const additionalOptions = EMOJI_DATA.filter(e => 
+        e.emoji !== emojiData.emoji && 
+        !options.includes(e.meaning)
+      )
+      .map(e => e.meaning)
+      .sort(() => Math.random() - 0.5)
+      .slice(0, 2);
+      
+      options = [...options, ...additionalOptions].sort(() => Math.random() - 0.5).slice(0, 4);
+    } else {
+      // Seçenekleri karıştır
+      options = options.sort(() => Math.random() - 0.5);
+    }
+    
+    // Zaman sınırını ayarla
+    const timeLimit = getTimeLimit(difficulty);
+    setTimeLeft(timeLimit);
     
     setCurrentQuestion({
       emoji: emojiData.emoji,
       correctAnswer: emojiData.meaning,
-      options: shuffledOptions
+      options,
+      difficulty,
+      emojis,
+      timeLimit
     });
     
     setSelectedOption(null);
@@ -271,24 +399,58 @@ const EmojiGuess: React.FC<{ playerCount: number }> = ({ playerCount }) => {
   const startQuestion = () => {
     generateQuestion();
     setPhase('question');
+    
+    // Zaman sayacını başlat
+    if (timer) clearInterval(timer);
+    const newTimer = setInterval(() => {
+      setTimeLeft(prev => {
+        if (prev <= 1) {
+          // Süre bitti, yanlış cevap olarak işaretle
+          if (!selectedOption) handleOptionSelect('', true);
+          clearInterval(newTimer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+    
+    setTimer(newTimer);
+  };
+  
+  // Zorluk seviyesini değiştir
+  const changeDifficulty = (newDifficulty: string) => {
+    setDifficulty(newDifficulty);
   };
   
   // Seçenek seçildiğinde
-  const handleOptionSelect = (option: string) => {
+  const handleOptionSelect = (option: string, timeout: boolean = false) => {
     if (selectedOption || !currentQuestion) return;
     
+    // Zamanlayıcıyı durdur
+    if (timer) clearInterval(timer);
+    
     setSelectedOption(option);
-    const correct = option === currentQuestion.correctAnswer;
+    const correct = option === currentQuestion.correctAnswer && !timeout;
     setIsCorrect(correct);
     
     // Oyuncu puanını güncelle
     setPlayers(prev => prev.map((p, i) => {
       if (i === activePlayer) {
+        // Streak sistemini uygula
+        const newStreak = correct ? p.streak + 1 : 0;
+        const streakBonus = newStreak >= 3 ? Math.min(newStreak - 2, 5) : 0;
+        
+        // Zorluk seviyesine göre puan
+        const basePoints = getPointValue(difficulty);
+        const totalPoints = correct ? basePoints + streakBonus : 0;
+        
         return { 
           ...p, 
-          score: p.score + (correct ? 10 : 0),
+          score: p.score + totalPoints,
           correctAnswers: p.correctAnswers + (correct ? 1 : 0),
-          totalAnswers: p.totalAnswers + 1
+          totalAnswers: p.totalAnswers + 1,
+          streak: newStreak,
+          maxStreak: Math.max(p.maxStreak, newStreak)
         };
       }
       return p;
@@ -315,6 +477,13 @@ const EmojiGuess: React.FC<{ playerCount: number }> = ({ playerCount }) => {
     }
   };
   
+  // Temizlik işlemleri
+  useEffect(() => {
+    return () => {
+      if (timer) clearInterval(timer);
+    };
+  }, [timer]);
+  
   // Kazananı bul
   const getWinner = () => {
     return players.reduce((highest, player) => 
@@ -331,6 +500,12 @@ const EmojiGuess: React.FC<{ playerCount: number }> = ({ playerCount }) => {
   const getAccuracy = (player: Player) => {
     if (player.totalAnswers === 0) return 0;
     return Math.round((player.correctAnswers / player.totalAnswers) * 100);
+  };
+  
+  // En iyi streak sahbini bul
+  const getBestStreakPlayer = () => {
+    return players.reduce((highest, player) => 
+      player.maxStreak > highest.maxStreak ? player : highest, players[0]);
   };
   
   return (
@@ -354,19 +529,62 @@ const EmojiGuess: React.FC<{ playerCount: number }> = ({ playerCount }) => {
           <InfoText>Sıra: Oyuncu {activePlayer + 1}</InfoText>
           <p style={{ color: 'white', textAlign: 'center' }}>
             Emoji gösterilecek, doğru anlamı seçmen gerekiyor.
-            Doğru cevap verirsen 10 puan kazanırsın!
+            Zorluk seviyesi arttıkça puan da artar!
           </p>
+          
+          <DifficultySelector>
+            <DifficultyButton 
+              selected={difficulty === DIFFICULTY_LEVELS.EASY}
+              onClick={() => changeDifficulty(DIFFICULTY_LEVELS.EASY)}
+            >
+              Kolay (5 puan)
+            </DifficultyButton>
+            <DifficultyButton 
+              selected={difficulty === DIFFICULTY_LEVELS.MEDIUM}
+              onClick={() => changeDifficulty(DIFFICULTY_LEVELS.MEDIUM)}
+            >
+              Orta (10 puan)
+            </DifficultyButton>
+            <DifficultyButton 
+              selected={difficulty === DIFFICULTY_LEVELS.HARD}
+              onClick={() => changeDifficulty(DIFFICULTY_LEVELS.HARD)}
+            >
+              Zor (15 puan)
+            </DifficultyButton>
+          </DifficultySelector>
+          
           <NextButton onClick={startQuestion}>Hazırım</NextButton>
         </>
       )}
       
       {phase === 'question' && currentQuestion && (
         <>
-          <InfoText>Emojinin anlamını seç!</InfoText>
+          <InfoText>{difficulty} Seviye</InfoText>
           
-          <EmojiCard>
-            {currentQuestion.emoji}
-          </EmojiCard>
+          <Timer urgent={timeLeft <= 5}>
+            Süre: {timeLeft} saniye
+          </Timer>
+          
+          {players[activePlayer].streak >= 2 && (
+            <StreakIndicator>
+              Seri: {players[activePlayer].streak}x
+              {Array.from({ length: Math.min(players[activePlayer].streak, 5) }).map((_, i) => (
+                <StreakIcon key={i} active={i < players[activePlayer].streak} />
+              ))}
+            </StreakIndicator>
+          )}
+          
+          {difficulty === DIFFICULTY_LEVELS.HARD ? (
+            <EmojiCombo size={currentQuestion.emojis?.length || 1}>
+              {currentQuestion.emojis?.map((emoji, i) => (
+                <span key={i} style={{ margin: '0 5px' }}>{emoji}</span>
+              ))}
+            </EmojiCombo>
+          ) : (
+            <EmojiCard>
+              {currentQuestion.emoji}
+            </EmojiCard>
+          )}
           
           <OptionsContainer>
             {currentQuestion.options.map((option, index) => (
@@ -386,37 +604,34 @@ const EmojiGuess: React.FC<{ playerCount: number }> = ({ playerCount }) => {
           {selectedOption && (
             <FeedbackText correct={isCorrect || false}>
               {isCorrect ? '✓ Doğru!' : '✗ Yanlış!'}
+              {isCorrect && players[activePlayer].streak >= 3 ? ` (+${Math.min(players[activePlayer].streak - 2, 5)} seri bonusu)` : ''}
             </FeedbackText>
           )}
         </>
       )}
       
-      {phase === 'result' && currentQuestion && (
+      {phase === 'result' && (
         <>
           <InfoText>
             {isCorrect 
-              ? 'Tebrikler! 10 puan kazandın!' 
-              : 'Yanlış cevap, doğru yanıt:'}
+              ? `Tebrikler! Doğru cevap: ${currentQuestion?.correctAnswer}`
+              : `Yanlış! Doğru cevap: ${currentQuestion?.correctAnswer}`
+            }
           </InfoText>
           
-          <EmojiCard>
-            {currentQuestion.emoji}
-          </EmojiCard>
-          
-          {!isCorrect && (
-            <div style={{ 
-              color: '#2ecc71', 
-              fontWeight: 'bold', 
-              fontSize: '1.5rem',
-              marginTop: '1rem',
-              textAlign: 'center'
-            }}>
-              {currentQuestion.correctAnswer}
-            </div>
-          )}
+          <p style={{ color: 'white', textAlign: 'center' }}>
+            {isCorrect 
+              ? `${getPointValue(difficulty || DIFFICULTY_LEVELS.MEDIUM)} puan kazandın!`
+              : 'Maalesef puan kazanamadın.'
+            }
+            {isCorrect && players[activePlayer].streak >= 3 
+              ? ` +${Math.min(players[activePlayer].streak - 2, 5)} bonus (${players[activePlayer].streak}x seri)` 
+              : ''
+            }
+          </p>
           
           <NextButton onClick={nextStep}>
-            {round >= totalRounds ? 'Sonuçları Gör' : 'Sonraki Soru'}
+            {round < totalRounds ? 'Sonraki Soru' : 'Sonuçları Gör'}
           </NextButton>
         </>
       )}
@@ -430,26 +645,62 @@ const EmojiGuess: React.FC<{ playerCount: number }> = ({ playerCount }) => {
             }
           </InfoText>
           
-          <div style={{ width: '100%', maxWidth: '500px', margin: '1rem auto' }}>
+          <div style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '1rem',
+            margin: '1rem 0'
+          }}>
             {players.map((player, index) => (
-              <div key={player.id} 
-                style={{ 
-                  display: 'flex', 
-                  justifyContent: 'space-between', 
-                  margin: '1rem 0', 
-                  padding: '10px',
-                  background: player.id === getWinner().id && !isTie() 
-                    ? 'rgba(255,255,255,0.1)' 
-                    : 'transparent',
-                  borderRadius: '8px'
+              <div key={player.id} style={{
+                display: 'flex',
+                flexDirection: 'column',
+                width: '100%',
+                maxWidth: '500px',
+                background: player.id === getWinner().id && !isTie() 
+                  ? 'rgba(255,255,255,0.15)' 
+                  : 'rgba(255,255,255,0.05)',
+                padding: '15px',
+                borderRadius: '10px'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  borderBottom: '1px solid rgba(255,255,255,0.1)',
+                  paddingBottom: '10px',
+                  marginBottom: '10px'
                 }}>
-                <div style={{ color: PLAYER_COLORS[index] }}>
-                  Oyuncu {player.id + 1}
+                  <span style={{ color: PLAYER_COLORS[index], fontWeight: 'bold' }}>
+                    Oyuncu {player.id + 1}
+                  </span>
+                  <span style={{ color: 'white', fontWeight: 'bold' }}>
+                    {player.score} puan
+                  </span>
                 </div>
-                <div style={{ color: 'white' }}>
-                  {player.score} puan 
-                  <span style={{ fontSize: '0.8rem', marginLeft: '8px', opacity: 0.8 }}>
-                    ({getAccuracy(player)}% doğru)
+                
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'rgba(255,255,255,0.7)' }}>Doğru Cevaplar</span>
+                  <span style={{ color: 'white' }}>
+                    {player.correctAnswers}/{player.totalAnswers}
+                  </span>
+                </div>
+                
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'rgba(255,255,255,0.7)' }}>Doğruluk Oranı</span>
+                  <span style={{ color: 'white' }}>
+                    {getAccuracy(player)}%
+                  </span>
+                </div>
+                
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'rgba(255,255,255,0.7)' }}>En Uzun Seri</span>
+                  <span style={{ 
+                    color: player.maxStreak === getBestStreakPlayer().maxStreak && getBestStreakPlayer().maxStreak > 1
+                      ? '#f1c40f' 
+                      : 'white'
+                  }}>
+                    {player.maxStreak}x
                   </span>
                 </div>
               </div>
@@ -457,7 +708,7 @@ const EmojiGuess: React.FC<{ playerCount: number }> = ({ playerCount }) => {
           </div>
           
           <NextButton onClick={() => window.location.reload()}>
-            Tekrar Oyna
+            Ana Menüye Dön
           </NextButton>
         </>
       )}
